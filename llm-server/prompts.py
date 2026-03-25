@@ -152,23 +152,41 @@ def build_setup_mystery_prompt(
     suspects: list[SuspectBlueprint],
     rooms: list[str],
     evidence_items: list[str],
+    forced_killer: str | None = None,
+    forced_positions: dict[str, str] | None = None,
+    forced_evidence_placements: dict[str, str] | None = None,
 ) -> tuple[str, str]:
     """Return (system_prompt, user_prompt) for generating a fresh mystery."""
     suspect_lines = "\n".join(
         f"- {s.name}: {s.personality.value}, {s.relationship.value}. Secret: {s.secret}"
         for s in suspects
     )
+
+    # Build hard-constraint block when the client has pre-randomised structure
+    constraints: list[str] = []
+    if forced_killer:
+        constraints.append(f'- FIXED: killer_name MUST be "{forced_killer}"')
+    if forced_positions:
+        pos_str = ", ".join(f"{n}→{r}" for n, r in forced_positions.items())
+        constraints.append(f"- FIXED: initial_npc_positions MUST be exactly: {pos_str}")
+    if forced_evidence_placements:
+        ev_str = ", ".join(f"{i}→{r}" for i, r in forced_evidence_placements.items())
+        constraints.append(f"- FIXED: evidence_placements MUST be exactly: {ev_str}")
+    constraint_block = (
+        "\nHARD CONSTRAINTS (do not change these values):\n" + "\n".join(constraints) + "\n"
+        if constraints else ""
+    )
+
     user = f"""Generate a murder mystery scenario for these suspects:
 {suspect_lines}
 
 Mansion rooms: {', '.join(rooms)}
 Evidence items available: {', '.join(evidence_items)}
-
+{constraint_block}
 Rules:
 - Choose exactly one killer. Their secret should be plausibly related to the motive.
 - Place at least 3 critical evidence items that point to the killer.
 - Give every suspect a true alibi. Give the killer a false alibi to tell.
-- All suspects start in different rooms if possible.
 - The mystery must be solvable — a clever player with the evidence should be able to identify the killer.
 
 Respond with this exact JSON schema:

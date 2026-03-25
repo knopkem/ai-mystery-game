@@ -252,7 +252,14 @@ def health():
 def setup_mystery(req: SetupMysteryRequest):
     """Generate a new mystery scenario at the start of a game."""
     from prompts import build_setup_mystery_prompt
-    system, user = build_setup_mystery_prompt(req.suspects, req.rooms, req.evidence_items)
+    system, user = build_setup_mystery_prompt(
+        req.suspects,
+        req.rooms,
+        req.evidence_items,
+        forced_killer=req.forced_killer,
+        forced_positions=req.forced_positions,
+        forced_evidence_placements=req.forced_evidence_placements,
+    )
 
     result = _parse_with_retry(system, user, MysterySetup)
     if result is None:

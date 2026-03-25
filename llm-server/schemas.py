@@ -95,6 +95,12 @@ class SetupMysteryRequest(BaseModel):
     suspects: list[SuspectBlueprint] = Field(min_length=5, max_length=6)
     rooms: list[str] = Field(min_length=3, max_length=8)
     evidence_items: list[str]
+    # Pre-randomised structural choices (supplied by client for variety).
+    # When present the LLM is told to treat them as hard constraints so only
+    # narrative (motive text, alibi wording, critical evidence) is generated.
+    forced_killer: str | None = None
+    forced_positions: dict[str, str] | None = None   # npc_name → room
+    forced_evidence_placements: dict[str, str] | None = None  # item → room
 
 
 class MysterySetup(BaseModel):

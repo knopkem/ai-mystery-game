@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import queue
+import random
 import threading
 
 import requests
@@ -32,7 +33,27 @@ class LLMClient:
             return None
 
     def request_setup(self, suspects: list, rooms: list, evidence: list) -> None:
-        payload = {"suspects": suspects, "rooms": rooms, "evidence_items": evidence}
+        # Pre-randomise structural choices so the LLM generates different
+        # mysteries each run rather than always picking the same killer/layout.
+        suspect_names   = [s["name"] for s in suspects]
+        shuffled_rooms  = random.sample(rooms, len(rooms))
+        forced_killer   = random.choice(suspect_names)
+        forced_positions = {
+            name: shuffled_rooms[i % len(shuffled_rooms)]
+            for i, name in enumerate(suspect_names)
+        }
+        forced_evidence = {
+            item: random.choice(rooms)
+            for item in random.sample(evidence, min(len(evidence), 5))
+        }
+        payload = {
+            "suspects": suspects,
+            "rooms": rooms,
+            "evidence_items": evidence,
+            "forced_killer": forced_killer,
+            "forced_positions": forced_positions,
+            "forced_evidence_placements": forced_evidence,
+        }
         threading.Thread(target=self._post, args=("/setup-mystery", payload, "setup"), daemon=True).start()
 
     def request_npc_actions(self, game_state_dict: dict) -> None:
