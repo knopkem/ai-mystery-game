@@ -1022,7 +1022,7 @@ def draw_game_over(surf: pygame.Surface, state: dict) -> None:
 
 
 def draw_title_screen(surf: pygame.Surface, server_ok: bool | None,
-                      btn_start: Button, btn_check: Button) -> None:
+                      btn_start: Button, btn_how: Button, btn_check: Button) -> None:
     surf.fill(C["bg"])
 
     cx = WIN_W // 2
@@ -1045,9 +1045,11 @@ def draw_title_screen(surf: pygame.Surface, server_ok: bool | None,
     s = F["hud"].render(st, True, sc)
     surf.blit(s, s.get_rect(center=(cx, px(300))))
 
-    btn_start.rect = pygame.Rect(cx - px(120), px(360), px(240), px(52))
-    btn_check.rect = pygame.Rect(cx - px(80),  px(430), px(160), px(36))
+    btn_start.rect = pygame.Rect(cx - px(120), px(356), px(240), px(52))
+    btn_how.rect   = pygame.Rect(cx - px(80),  px(424), px(160), px(36))
+    btn_check.rect = pygame.Rect(cx - px(80),  px(474), px(160), px(36))
     btn_start.draw(surf)
+    btn_how.draw(surf)
     btn_check.draw(surf)
 
     instructions = [
@@ -1055,11 +1057,88 @@ def draw_title_screen(surf: pygame.Surface, server_ok: bool | None,
         "Use the side panel to Interrogate, End Turn, or Accuse",
         "Identify the killer and their motive before 15 turns pass",
     ]
-    iy = px(500)
+    iy = px(530)
     for line in instructions:
         s = F["panel_sm"].render(line, True, C["text_dim"])
         surf.blit(s, s.get_rect(center=(cx, iy)))
         iy += px(22)
+
+
+def draw_tutorial_screen(surf: pygame.Surface, btn_back: Button) -> None:
+    surf.fill(C["bg"])
+    cx = WIN_W // 2
+
+    # Title bar
+    t = F["big"].render("HOW TO PLAY", True, C["text_hi"])
+    surf.blit(t, t.get_rect(center=(cx, px(36))))
+    pygame.draw.line(surf, C["border_hi"], (cx - px(260), px(62)), (cx + px(260), px(62)))
+
+    col_l = px(60)
+    col_r = WIN_W // 2 + px(20)
+    col_w = WIN_W // 2 - px(80)
+    y_l   = px(80)
+    y_r   = px(80)
+
+    def _section(title: str, items: list[str], x: int, y: int) -> int:
+        surf.blit(F["panel"].render(title, True, C["gold"]), (x, y))
+        y += px(24)
+        pygame.draw.line(surf, C["sep"], (x, y), (x + col_w, y))
+        y += px(8)
+        for item in items:
+            y = draw_text(surf, "panel_sm", item, C["text"], x, y, max_w=col_w)
+            y += px(4)
+        return y + px(12)
+
+    # ── Left column ──────────────────────────────────────────────────────
+    y_l = _section("OBJECTIVE", [
+        "Lord Ashworth has been murdered. You have 15 turns to identify the killer "
+        "and state their motive — before they escape.",
+    ], col_l, y_l)
+
+    y_l = _section("YOUR TURN  (2 Action Points per turn)", [
+        "Move — click any room on the map  (1 AP)",
+        "Examine — select evidence, then click 'Examine Selected'  (1 AP)",
+        "Interrogate — select an NPC in your room, click 'Interrogate Selected', "
+        "type a question and press Enter  (1 AP)",
+        "End Turn — skip remaining AP and let NPCs act immediately",
+    ], col_l, y_l)
+
+    y_l = _section("MAKING AN ACCUSATION", [
+        "Click 'Accuse...' at any time during your turn.",
+        "Select the suspect you believe committed the murder.",
+        "Type the motive (e.g. 'prevent exposure of embezzlement').",
+        "Right suspect + right motive  →  CASE SOLVED  ✓",
+        "Right suspect, wrong motive  →  Inconclusive  ⚠",
+        "Wrong suspect  →  The killer escapes  ✗",
+    ], col_l, y_l)
+
+    # ── Right column ─────────────────────────────────────────────────────
+    y_r = _section("NPC BEHAVIOUR  (AI-driven)", [
+        "After your turn, each NPC acts using the local language model.",
+        "Innocent suspects move, gossip, and investigate.",
+        "The killer may hide or destroy evidence, avoid you, or act suspiciously calm.",
+        "The pressure bar under an NPC circle shows how rattled they are — "
+        "red means they are close to cracking.",
+    ], col_r, y_r)
+
+    y_r = _section("EVIDENCE", [
+        "Gold squares in a room mark evidence you can examine.",
+        "Examined clues appear in your Notes — press 'View Notes' to review them.",
+        "Critical evidence can be destroyed by the killer. Act quickly!",
+        "If all critical evidence is gone, the case becomes unsolvable.",
+    ], col_r, y_r)
+
+    y_r = _section("TIPS", [
+        "Spend the first few turns sweeping every room for evidence.",
+        "Interrogate each suspect at least once — liars show inconsistencies (⚠ warning shown).",
+        "Bring evidence to interrogations for stronger, more revealing reactions.",
+        "Compare alibis across suspects — the killer's story will eventually contradict itself.",
+        "Use 'View Notes' to review all testimony before making your accusation.",
+    ], col_r, y_r)
+
+    # Back button centred at bottom
+    btn_back.rect = pygame.Rect(cx - px(80), WIN_H - px(54), px(160), px(40))
+    btn_back.draw(surf)
 
 
 def draw_loading_screen(surf: pygame.Surface, tick: int) -> None:
@@ -1077,6 +1156,7 @@ def draw_loading_screen(surf: pygame.Surface, tick: int) -> None:
 
 class Screen(Enum):
     TITLE    = auto()
+    TUTORIAL = auto()
     LOADING  = auto()
     GAME     = auto()
     GAME_OVER = auto()
@@ -1126,8 +1206,10 @@ class Game:
         self.btn_notes_close = Button(pygame.Rect(0, 0, px(110), px(34)), "Close")
 
         # Title screen buttons
-        self.btn_start = Button(pygame.Rect(0, 0, px(240), px(52)), "New Investigation")
-        self.btn_check = Button(pygame.Rect(0, 0, px(160), px(36)), "Check Server")
+        self.btn_start    = Button(pygame.Rect(0, 0, px(240), px(52)), "New Investigation")
+        self.btn_how      = Button(pygame.Rect(0, 0, px(160), px(36)), "How to Play")
+        self.btn_check    = Button(pygame.Rect(0, 0, px(160), px(36)), "Check Server")
+        self.btn_tut_back = Button(pygame.Rect(0, 0, px(160), px(40)), "← Back to Menu")
 
         # Game-over buttons
         self.go_state: dict = {}
@@ -1255,13 +1337,19 @@ class Game:
     # ── Event handling ──────────────────────────────────────────────────
 
     def _handle_event(self, event: pygame.event.Event) -> None:
-        # Global: Escape closes overlay
+        # Global: Escape goes back to title from tutorial, or closes overlay in game
         if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-            self.overlay = Overlay.NONE
+            if self.screen == Screen.TUTORIAL:
+                self.screen = Screen.TITLE
+            else:
+                self.overlay = Overlay.NONE
             return
 
         if self.screen == Screen.TITLE:
             self._handle_title(event)
+        elif self.screen == Screen.TUTORIAL:
+            if self.btn_tut_back.is_clicked(event):
+                self.screen = Screen.TITLE
         elif self.screen == Screen.GAME:
             if   self.overlay == Overlay.INTERROGATE:
                 self._handle_interrogate(event)
@@ -1282,6 +1370,8 @@ class Game:
     def _handle_title(self, event: pygame.event.Event) -> None:
         if self.btn_start.is_clicked(event):
             self._start_new_game()
+        if self.btn_how.is_clicked(event):
+            self.screen = Screen.TUTORIAL
         if self.btn_check.is_clicked(event):
             self.server_ok = None
             threading.Thread(target=self._do_health_check, daemon=True).start()
@@ -1463,7 +1553,11 @@ class Game:
         self.surf.fill(C["bg"])
 
         if self.screen == Screen.TITLE:
-            draw_title_screen(self.surf, self.server_ok, self.btn_start, self.btn_check)
+            draw_title_screen(self.surf, self.server_ok, self.btn_start, self.btn_how, self.btn_check)
+            return
+
+        if self.screen == Screen.TUTORIAL:
+            draw_tutorial_screen(self.surf, self.btn_tut_back)
             return
 
         if self.screen == Screen.LOADING:
