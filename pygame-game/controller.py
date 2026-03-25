@@ -185,6 +185,15 @@ class Game:
         if tag == "setup":
             self.thinking = False
             if data:
+                # Enforce pre-randomised structural values regardless of what
+                # the LLM returned — it often ignores prompt constraints.
+                c = self.client.pending_setup_constraints
+                if c.get("forced_killer"):
+                    data["killer_name"] = c["forced_killer"]
+                if c.get("forced_positions"):
+                    data["initial_npc_positions"] = c["forced_positions"]
+                if c.get("forced_evidence_placements"):
+                    data["evidence_placements"] = c["forced_evidence_placements"]
                 self.gs.apply_mystery_setup(data)
             else:
                 # Fallback: generate minimal mystery locally

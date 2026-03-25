@@ -16,6 +16,7 @@ from game.constants import SERVER
 class LLMClient:
     def __init__(self) -> None:
         self.result_queue: queue.Queue = queue.Queue()
+        self.pending_setup_constraints: dict = {}
 
     def _post(self, path: str, payload: dict, tag: str) -> None:
         try:
@@ -46,13 +47,17 @@ class LLMClient:
             item: random.choice(rooms)
             for item in random.sample(evidence, min(len(evidence), 5))
         }
+        # Stash so the game can enforce them client-side after the response
+        self.pending_setup_constraints = {
+            "forced_killer": forced_killer,
+            "forced_positions": forced_positions,
+            "forced_evidence_placements": forced_evidence,
+        }
         payload = {
             "suspects": suspects,
             "rooms": rooms,
             "evidence_items": evidence,
-            "forced_killer": forced_killer,
-            "forced_positions": forced_positions,
-            "forced_evidence_placements": forced_evidence,
+            **self.pending_setup_constraints,
         }
         threading.Thread(target=self._post, args=("/setup-mystery", payload, "setup"), daemon=True).start()
 

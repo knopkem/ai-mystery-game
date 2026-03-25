@@ -268,6 +268,17 @@ def setup_mystery(req: SetupMysteryRequest):
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Model unavailable. Ensure the GGUF model is loaded.",
         )
+
+    # Hard-override structural fields with pre-randomised values from the
+    # client.  LLMs often ignore prompt constraints; doing this server-side
+    # guarantees variety regardless of what the model actually output.
+    if req.forced_killer:
+        result.killer_name = req.forced_killer
+    if req.forced_positions:
+        result.initial_npc_positions = req.forced_positions
+    if req.forced_evidence_placements:
+        result.evidence_placements = req.forced_evidence_placements
+
     log.info("/setup-mystery: killer=%s, motive=%s", result.killer_name, result.motive)
     return result
 
