@@ -326,6 +326,179 @@ def save_jsonl(examples: list[dict], path: Path):
     log.info("Saved %d examples → %s", len(examples), path)
 
 
+def _append_jsonl(examples: list[dict], path: Path) -> None:
+    """Append examples to a JSONL file (creates it if missing)."""
+    with open(path, "a") as f:
+        for ex in examples:
+            f.write(json.dumps(ex, ensure_ascii=False) + "\n")
+
+
+def _load_existing(path: Path) -> list[dict]:
+    """Load already-generated examples so we can resume after interruption."""
+    if not path.exists():
+        return []
+    examples = []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    examples.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+    return examples
+
+
+def generate_npc_actions(client: anthropic.Anthropic, model: str, count: int,
+                         out_path: Path) -> list[dict]:
+    existing = _load_existing(out_path)
+    start = len(existing)
+    if start >= count:
+        log.info("NPC actions already complete (%d/%d) — skipping.", start, count)
+        return existing
+    if start:
+        log.info("Resuming NPC actions from %d/%d...", start, count)
+    else:
+        log.info("Generating %d NPC action examples...", count)
+
+    examples = list(existing)
+    batch: list[dict] = []
+    for i in range(start, count):
+        suspects = _random_suspects(1)
+        s = suspects[0]
+        is_killer = random.random() < 0.5
+        motive = random.choice(MOTIVES) if is_killer else None
+        known_ev = random.sample(EVIDENCE_ITEMS, random.randint(0, 3))
+        action_history = random.sample(NPC_ACTIONS, random.randint(0, 4))
+        result = _call(
+            client, model,
+            _npc_action_system(),
+            _npc_action_user(
+                name=s["name"],
+                personality=s["personality"],
+                relationship=s["relationship"],
+                secret=s["secret"],
+                is_killer=is_killer,
+                motive=motive,
+                turn=random.randint(1, 15),
+                room=random.choice(ROOMS),
+                player_room=random.choice(ROOMS),
+                pressure=random.randint(0, 10),
+                known_evidence=known_ev,
+                action_history=action_history,
+                player_suspicion=random.choice(SUSPECT_NAMES + [None]),
+            ),
+        )
+        if result:
+            examples.append(result)
+            batch.append(result)
+        if len(batch) >= 50:
+            _append_jsonl(batch, out_path)
+            batch = []
+            log.info("  NPC actions: %d/%d (saved)", i + 1, count)
+        elif (i + 1) % 50 == 0:
+            log.info("  NPC actions: %d/%d", i + 1, count)
+    if batch:
+        _append_jsonl(batch, out_path)
+    return examples
+
+
+def generate_interrogations(client: anthropic.Anthropic, model: str, count: int,
+                            out_path: Path) -> list[dict]:
+    existing = _load_existing(out_path)
+    start = len(existing)
+    if start >= count:
+        log.info("Interrogations already complete (%d/%d) — skipping.", start, count)
+        return existing
+    if start:
+        log.info("Resuming interrogations from %d/%d...", start, count)
+    else:
+        log.info("Generating %d interrogation examples...", count)
+
+    examples = list(existing)
+    batch: list[dict] = []
+    for i in range(start, count):
+        suspects = _random_suspects(1)
+        s = suspects[0]
+        is_killer = random.random() < 0.5
+        motive = random.choice(MOTIVES) if is_killer else None
+        pressure = random.randint(0, 10)
+        result = _call(
+            client, model,
+            _interrogate_system(),
+            _interrogate_user(
+                name=s["name"],
+                personality=s["personality"],
+                relationship=s["relationship"],
+                secret=s["secret"],
+                is_killer=is_killer,
+                motive=motive,
+                pressure=pressure,
+                alibi=_random_alibi(),
+                lies_told=random.sample(SAMPLE_QUESTIONS[:3], random.randint(0, 2)),
+                question=random.choice(SAMPLE_QUESTIONS),
+                evidence_shown=random.sample(EVIDENCE_ITEMS, random.randint(0, 2)),
+            ),
+        )
+        if result:
+            examples.append(result)
+            batch.append(result)
+        if len(batch) >= 50:
+            _append_jsonl(batch, out_path)
+            batch = []
+            log.info("  Interrogations: %d/%d (saved)", i + 1, count)
+        elif (i + 1) % 50 == 0:
+            log.info("  Interrogations: %d/%d", i + 1, count)
+    if batch:
+        _append_jsonl(batch, out_path)
+    return examples
+
+
+def generate_mystery_setups(client: anthropic.Anthropic, model: str, count: int,
+                            out_path: Path) -> list[dict]:
+    existing = _load_existing(out_path)
+    start = len(existing)
+    if start >= count:
+        log.info("Mystery setups already complete (%d/%d) — skipping.", start, count)
+        return existing
+    if start:
+        log.info("Resuming mystery setups from %d/%d...", start, count)
+    else:
+        log.info("Generating %d mystery setup examples...", count)
+
+    examples = list(existing)
+    batch: list[dict] = []
+    for i in range(start, count):
+        result = _call(
+            client, model,
+            _mystery_setup_system(),
+            _mystery_setup_user(_random_suspects(5)),
+        )
+        if result:
+            examples.append(result)
+            batch.append(result)
+        if len(batch) >= 20:
+            _append_jsonl(batch, out_path)
+            batch = []
+            log.info("  Mystery setups: %d/%d (saved)", i + 1, count)
+        elif (i + 1) % 20 == 0:
+            log.info("  Mystery setups: %d/%d", i + 1, count)
+    if batch:
+        _append_jsonl(batch, out_path)
+    return examples
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def save_jsonl(examples: list[dict], path: Path):
+    with open(path, "w") as f:
+        for ex in examples:
+            f.write(json.dumps(ex, ensure_ascii=False) + "\n")
+    log.info("Saved %d examples → %s", len(examples), path)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate synthetic training data")
     parser.add_argument("--target", type=int, default=2700, help="Total examples to generate")
@@ -352,14 +525,12 @@ def main():
     n_interrogations = int(args.target * 0.37)
     n_setups = args.target - n_actions - n_interrogations
 
-    actions = generate_npc_actions(client, args.model, n_actions)
-    save_jsonl(actions, DATA_DIR / "npc_actions.jsonl")
-
-    interrogations = generate_interrogations(client, args.model, n_interrogations)
-    save_jsonl(interrogations, DATA_DIR / "interrogations.jsonl")
-
-    setups = generate_mystery_setups(client, args.model, n_setups)
-    save_jsonl(setups, DATA_DIR / "mystery_setups.jsonl")
+    actions = generate_npc_actions(client, args.model, n_actions,
+                                   DATA_DIR / "npc_actions.jsonl")
+    interrogations = generate_interrogations(client, args.model, n_interrogations,
+                                             DATA_DIR / "interrogations.jsonl")
+    setups = generate_mystery_setups(client, args.model, n_setups,
+                                     DATA_DIR / "mystery_setups.jsonl")
 
     total = len(actions) + len(interrogations) + len(setups)
     log.info("Done. Total examples generated: %d", total)
