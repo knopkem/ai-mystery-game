@@ -46,3 +46,4 @@ Icon
 .idea/
 *.swp
 *.swo
+pygame-game/.venv/
