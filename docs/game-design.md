@@ -4,6 +4,9 @@
 
 A turn-based 2D murder mystery set in a Victorian mansion. The twist: all NPC behavior is driven by a locally-running fine-tuned language model. Each playthrough is procedurally generated — a different killer, motive, evidence trail, and set of NPC decisions every time.
 
+**Engine**: Pygame-CE (Python) — all UI drawn programmatically, no external assets required.
+**Target hardware**: MacBook M4, 16 GB RAM.
+
 ---
 
 ## Setting
