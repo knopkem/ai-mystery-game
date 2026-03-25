@@ -1,0 +1,7 @@
+unsloth
+trl>=0.12
+datasets>=3.0
+transformers>=4.45
+torch>=2.4
+accelerate>=1.0
+openai>=1.0
