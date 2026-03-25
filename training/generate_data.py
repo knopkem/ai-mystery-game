@@ -329,7 +329,16 @@ def save_jsonl(examples: list[dict], path: Path):
 def main():
     parser = argparse.ArgumentParser(description="Generate synthetic training data")
     parser.add_argument("--target", type=int, default=2700, help="Total examples to generate")
-    parser.add_argument("--model", default="claude-haiku-4-5", help="Anthropic model to use")
+    parser.add_argument(
+        "--model",
+        default="claude-haiku-4-5",
+        help=(
+            "Anthropic model to use. Options:\n"
+            "  claude-haiku-4-5   — fastest, cheapest (~$1-2 for 2700 examples) [default]\n"
+            "  claude-sonnet-4-6  — higher quality, ~10x more expensive\n"
+            "  claude-opus-4-6    — best quality, ~50x more expensive"
+        ),
+    )
     args = parser.parse_args()
 
     api_key = os.getenv("ANTHROPIC_API_KEY")
