@@ -133,6 +133,8 @@ def train(epochs: int, batch_size: int, output_dir: Path,
           max_seq_length: int, model_name: str, cooldown_secs: int):
     try:
         from mlx_tune import FastLanguageModel, SFTTrainer, SFTConfig  # type: ignore
+        import datasets as _datasets
+        _datasets.disable_caching()   # avoids dill/Python-3.14 fingerprint crash
         from datasets import Dataset  # type: ignore
     except ImportError as e:
         raise SystemExit(
