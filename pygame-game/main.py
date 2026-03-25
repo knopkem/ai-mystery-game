@@ -509,7 +509,12 @@ def _fallback_interrogate(npc: dict, question: str, evidence_shown: list[str]) -
         )
     )
     if asking_about_evidence:
-        ev = evidence_shown[-1].replace("_", " ")
+        # Prefer the item the player actually named in the question
+        ev = evidence_shown[-1].replace("_", " ")   # default: last found
+        for en in ev_names:
+            if en in q:
+                ev = en
+                break
         if is_killer:
             lie = True
             if pressure >= 6:
