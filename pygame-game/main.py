@@ -52,6 +52,7 @@ LOG_RECT  = pygame.Rect(0,                    WIN_H - LOG_H, WIN_W, LOG_H)
 CELL_W, CELL_H, CELL_GAP = 397, 181, 8
 GX = MAP_RECT.x + 6
 GY = MAP_RECT.y + 6
+DPR = 1  # updated by _apply_dpr() at runtime
 
 def _room_rect(col: int, row: int, span: int = 1) -> pygame.Rect:
     return pygame.Rect(
@@ -68,6 +69,39 @@ ROOM_RECTS: dict[str, pygame.Rect] = {
     "bedroom":  _room_rect(1, 1),
     "garden":   _room_rect(0, 2, span=2),
 }
+
+def px(n: int | float) -> int:
+    """Scale a logical-pixel value by the current device pixel ratio."""
+    return int(n * DPR)
+
+def _apply_dpr(dpr: int) -> None:
+    """Re-derive all layout globals for the detected device pixel ratio.
+    Called once at startup before font init."""
+    global DPR, WIN_W, WIN_H, HUD_H, LOG_H, MAP_W, SIDE_W
+    global HUD_RECT, MAP_RECT, SIDE_RECT, LOG_RECT
+    global CELL_W, CELL_H, CELL_GAP, GX, GY
+
+    DPR   = dpr
+    WIN_W = 1280 * dpr;  WIN_H  = 720 * dpr
+    HUD_H = 48   * dpr;  LOG_H  = 88  * dpr
+    MAP_W = 820  * dpr;  SIDE_W = WIN_W - MAP_W - 5 * dpr
+
+    HUD_RECT  = pygame.Rect(0,              0,      WIN_W, HUD_H)
+    MAP_RECT  = pygame.Rect(0,              HUD_H,  MAP_W, WIN_H - HUD_H - LOG_H)
+    SIDE_RECT = pygame.Rect(MAP_W + 5*dpr,  HUD_H,  SIDE_W, WIN_H - HUD_H - LOG_H)
+    LOG_RECT  = pygame.Rect(0,              WIN_H - LOG_H, WIN_W, LOG_H)
+
+    CELL_W, CELL_H, CELL_GAP = 397*dpr, 181*dpr, 8*dpr
+    GX = MAP_RECT.x + 6*dpr
+    GY = MAP_RECT.y + 6*dpr
+
+    ROOM_RECTS.update({
+        "library":  _room_rect(0, 0),
+        "foyer":    _room_rect(1, 0),
+        "kitchen":  _room_rect(0, 1),
+        "bedroom":  _room_rect(1, 1),
+        "garden":   _room_rect(0, 2, span=2),
+    })
 
 ROOM_BG: dict[str, tuple] = {
     "foyer":   (38, 28, 16),
@@ -139,7 +173,7 @@ F: dict[str, pygame.font.Font] = {}
 
 def _init_fonts() -> None:
     def sf(name: str, size: int) -> pygame.font.Font:
-        return pygame.font.SysFont(name, size)
+        return pygame.font.SysFont(name, size * DPR)
 
     mono = "courier"
     sans = "helvetica"
@@ -178,9 +212,9 @@ class Button:
             hovered = self.rect.collidepoint(mx, my)
             bg, tc = (C["btn_hi"] if hovered else C["btn"]), C["btn_t"]
 
-        pygame.draw.rect(surf, bg, self.rect, border_radius=4)
+        pygame.draw.rect(surf, bg, self.rect, border_radius=px(4))
         border_col = C["border_hi"] if self.active else C["border"]
-        pygame.draw.rect(surf, border_col, self.rect, 1, border_radius=4)
+        pygame.draw.rect(surf, border_col, self.rect, 1, border_radius=px(4))
 
         txt = F["btn"].render(self.label, True, tc)
         surf.blit(txt, txt.get_rect(center=self.rect.center))
@@ -225,15 +259,15 @@ class TextInput:
             self._show_cursor = not self._show_cursor
 
     def draw(self, surf: pygame.Surface) -> None:
-        pygame.draw.rect(surf, C["btn"], self.rect, border_radius=4)
+        pygame.draw.rect(surf, C["btn"], self.rect, border_radius=px(4))
         border = C["border_hi"] if self.active else C["border"]
-        pygame.draw.rect(surf, border, self.rect, 1, border_radius=4)
+        pygame.draw.rect(surf, border, self.rect, 1, border_radius=px(4))
 
         display = self.text if self.text else self.placeholder
         color   = C["text"] if self.text else C["text_dim"]
         cursor  = "|" if (self.active and self._show_cursor) else ""
         rendered = F["input"].render(display + cursor, True, color)
-        surf.blit(rendered, (self.rect.x + 8, self.rect.y + (self.rect.h - rendered.get_height()) // 2))
+        surf.blit(rendered, (self.rect.x + px(8), self.rect.y + (self.rect.h - rendered.get_height()) // 2))
 
     def clear(self) -> None:
         self.text = ""
@@ -247,7 +281,7 @@ def draw_text(surf: pygame.Surface, font_key: str, text: str,
     if max_w <= 0:
         s = font.render(text, True, color)
         surf.blit(s, (x, y))
-        return y + s.get_height() + 2
+        return y + s.get_height() + px(2)
 
     words = text.split()
     line, lines = [], []
@@ -264,12 +298,12 @@ def draw_text(surf: pygame.Surface, font_key: str, text: str,
     for l in lines:
         s = font.render(l, True, color)
         surf.blit(s, (x, y))
-        y += s.get_height() + 2
+        y += s.get_height() + px(2)
     return y
 
 
 def draw_divider(surf: pygame.Surface, rect: pygame.Rect, y: int) -> None:
-    pygame.draw.line(surf, C["sep"], (rect.x + 8, y), (rect.right - 8, y))
+    pygame.draw.line(surf, C["sep"], (rect.x + px(8), y), (rect.right - px(8), y))
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -661,35 +695,35 @@ def draw_room(surf: pygame.Surface, name: str, gs: GameState,
 
     # Evidence items
     ev_items = gs.evidence_in_room(name)
-    ex = rect.x + 8
-    ey = rect.y + 30
-    max_ev_w = rect.w - 30  # leave space for NPC circles on the right
+    ex = rect.x + px(8)
+    ey = rect.y + px(30)
+    max_ev_w = rect.w - px(30)  # leave space for NPC circles on the right
     for item in ev_items:
         label = item.replace("_", " ")
         sel = item == selected_ev
-        ic  = pygame.Rect(ex, ey, 14, 14)
+        ic  = pygame.Rect(ex, ey, px(14), px(14))
         pygame.draw.rect(surf, C["gold"] if not sel else (255, 240, 100), ic, border_radius=2)
         if sel:
             pygame.draw.rect(surf, C["border_hi"], ic, 1, border_radius=2)
         et = F["room_sm"].render(label, True, C["gold"] if not sel else C["text_hi"])
         # Clip the label so it never overflows the room width
-        clip_w = min(et.get_width(), rect.right - ex - 18 - 4)
-        surf.blit(et, (ex + 18, ey), area=pygame.Rect(0, 0, clip_w, et.get_height()))
-        ey += 18
-        if ey > rect.bottom - 20:
+        clip_w = min(et.get_width(), rect.right - ex - px(18) - px(4))
+        surf.blit(et, (ex + px(18), ey), area=pygame.Rect(0, 0, clip_w, et.get_height()))
+        ey += px(18)
+        if ey > rect.bottom - px(20):
             break
 
     # NPCs in this room — draw inside a clip rect so labels never escape the border
     npcs_here = gs.npcs_in_room(name)
-    nx = rect.right - 12
-    ny = rect.y + rect.h - 32
+    nx = rect.right - px(12)
+    ny = rect.y + rect.h - px(32)
     old_clip = surf.get_clip()
     surf.set_clip(rect)
     for npc in npcs_here:
         first = npc["name"].split()[0]
         is_sel = npc["name"] == selected_npc
         col    = npc["color"]
-        radius = 14 if is_sel else 11
+        radius = px(14) if is_sel else px(11)
         cx     = nx - radius
         cy     = ny
 
@@ -698,20 +732,20 @@ def draw_room(surf: pygame.Surface, name: str, gs: GameState,
             pygame.draw.circle(surf, C["border_hi"], (cx, cy), radius, 2)
 
         nt = F["room_sm"].render(first, True, (255, 255, 255))
-        surf.blit(nt, (cx - nt.get_width() // 2, cy + radius + 1))
-        nx -= radius * 2 + 24
+        surf.blit(nt, (cx - nt.get_width() // 2, cy + radius + px(1)))
+        nx -= radius * 2 + px(24)
     surf.set_clip(old_clip)
 
     # Pressure indicator for visible NPCs
     if npcs_here and is_current:
-        pi = rect.x + 8
+        pi = rect.x + px(8)
         for npc in npcs_here:
             p = npc["pressure"]
             if p > 0:
-                bar_w = min(p * 8, 80)
-                bar_r = pygame.Rect(pi, rect.bottom - 10, bar_w, 5)
-                pygame.draw.rect(surf, C["red"] if p > 6 else C["amber"], bar_r, border_radius=2)
-                pi += bar_w + 4
+                bar_w = min(p * px(8), px(80))
+                bar_r = pygame.Rect(pi, rect.bottom - px(10), bar_w, px(5))
+                pygame.draw.rect(surf, C["red"] if p > 6 else C["amber"], bar_r, border_radius=px(2))
+                pi += bar_w + px(4)
 
 
 def draw_map(surf: pygame.Surface, gs: GameState,
@@ -732,7 +766,7 @@ def draw_hud(surf: pygame.Surface, gs: GameState) -> None:
     phase_txt = {Phase.PLAYER: "YOUR TURN", Phase.NPC: "NPCs THINKING…", Phase.EVENT: "EVENT"}
     phase_col = {Phase.PLAYER: C["green"], Phase.NPC: C["amber"], Phase.EVENT: C["text_hi"]}
 
-    cx, y = 12, 14
+    cx, y = px(12), px(14)
     for text, color in [
         (f"Turn {gs.turn}/{MAX_TURNS}", C["text"]),
         ("  |  ", C["sep"]),
@@ -759,57 +793,57 @@ def draw_panel(surf: pygame.Surface, gs: GameState,
     pygame.draw.line(surf, C["border"], (SIDE_RECT.x, SIDE_RECT.y),
                      (SIDE_RECT.x, SIDE_RECT.bottom))
 
-    x0, w = SIDE_RECT.x + 10, SIDE_RECT.w - 20
-    y = SIDE_RECT.y + 10
+    x0, w = SIDE_RECT.x + px(10), SIDE_RECT.w - px(20)
+    y = SIDE_RECT.y + px(10)
 
     # NPCs in current room
     npcs_here = gs.npcs_in_room(gs.player_room)
     y = draw_text(surf, "panel", f"In the {gs.player_room.capitalize()}:", C["text_hi"], x0, y)
-    y += 4
+    y += px(4)
     if npcs_here:
         for npc in npcs_here:
             col  = npc["color"]
             sel  = npc["name"] == selected_npc
-            pygame.draw.circle(surf, col, (x0 + 8, y + 8), 7)
+            pygame.draw.circle(surf, col, (x0 + px(8), y + px(8)), px(7))
             if sel:
-                pygame.draw.circle(surf, C["border_hi"], (x0 + 8, y + 8), 7, 2)
+                pygame.draw.circle(surf, C["border_hi"], (x0 + px(8), y + px(8)), px(7), 2)
             label = npc["name"] + (f"  [P:{npc['pressure']}]" if npc["pressure"] > 0 else "")
             tc = C["text_hi"] if sel else C["text"]
-            draw_text(surf, "panel_sm", label, tc, x0 + 20, y + 2)
-            y += 22
+            draw_text(surf, "panel_sm", label, tc, x0 + px(20), y + px(2))
+            y += px(22)
     else:
         y = draw_text(surf, "panel_sm", "  Nobody here", C["text_dim"], x0, y)
-    y += 6
+    y += px(6)
 
     draw_divider(surf, SIDE_RECT, y)
-    y += 8
+    y += px(8)
 
     # Evidence in current room
     ev_here = gs.evidence_in_room(gs.player_room)
     y = draw_text(surf, "panel", "Evidence here:", C["text_hi"], x0, y)
-    y += 4
+    y += px(4)
     if ev_here:
         for item in ev_here:
             sel = item == selected_ev
             col = C["text_hi"] if sel else C["gold"]
             prefix = "▸ " if sel else "  "
             draw_text(surf, "panel_sm", prefix + item.replace("_", " "), col, x0, y)
-            y += 18
+            y += px(18)
     else:
         y = draw_text(surf, "panel_sm", "  Nothing visible", C["text_dim"], x0, y)
-    y += 6
+    y += px(6)
 
     draw_divider(surf, SIDE_RECT, y)
-    y += 8
+    y += px(8)
 
     # Selection status
     if selected_ev:
         draw_text(surf, "panel_sm", f"Selected: {selected_ev.replace('_',' ')}", C["gold"], x0, y)
-        y += 18
+        y += px(18)
     if selected_npc:
         draw_text(surf, "panel_sm", f"Selected: {selected_npc}", C["text_hi"], x0, y)
-        y += 18
-    y += 4
+        y += px(18)
+    y += px(4)
 
     # Action buttons
     btn_y = y
@@ -818,7 +852,7 @@ def draw_panel(surf: pygame.Surface, gs: GameState,
 
     if thinking:
         spin_x = SIDE_RECT.x + SIDE_RECT.w // 2
-        spin_y = SIDE_RECT.bottom - 30
+        spin_y = SIDE_RECT.bottom - px(30)
         t = F["panel_sm"].render("⏳ Waiting for LLM…", True, C["amber"])
         surf.blit(t, t.get_rect(center=(spin_x, spin_y)))
 
@@ -832,10 +866,10 @@ def draw_log(surf: pygame.Surface, gs: GameState) -> None:
     pygame.draw.line(surf, C["border"], (0, LOG_RECT.y), (WIN_W, LOG_RECT.y))
 
     recent = gs.log[-4:]
-    y = LOG_RECT.y + 6
+    y = LOG_RECT.y + px(6)
     for entry in recent:
-        draw_text(surf, "log", entry[:160], (175, 155, 115), 10, y, WIN_W - 20)
-        y += 18
+        draw_text(surf, "log", entry[:160], (175, 155, 115), px(10), y, WIN_W - px(20))
+        y += px(18)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -847,27 +881,27 @@ def draw_overlay_bg(surf: pygame.Surface, rect: pygame.Rect) -> None:
     dark = pygame.Surface((WIN_W, WIN_H), pygame.SRCALPHA)
     dark.fill((6, 4, 12, 200))
     surf.blit(dark, (0, 0))
-    pygame.draw.rect(surf, C["panel"], rect, border_radius=8)
-    pygame.draw.rect(surf, C["border_hi"], rect, 2, border_radius=8)
+    pygame.draw.rect(surf, C["panel"], rect, border_radius=px(8))
+    pygame.draw.rect(surf, C["border_hi"], rect, 2, border_radius=px(8))
 
 
 def draw_interrogate_overlay(surf: pygame.Surface, state: dict) -> None:
-    rect = pygame.Rect(WIN_W // 2 - 420, WIN_H // 2 - 240, 840, 480)
+    rect = pygame.Rect(WIN_W // 2 - px(420), WIN_H // 2 - px(240), px(840), px(480))
     draw_overlay_bg(surf, rect)
-    x, y, w = rect.x + 24, rect.y + 20, rect.w - 48
+    x, y, w = rect.x + px(24), rect.y + px(20), rect.w - px(48)
 
     npc_name = state["npc_name"]
     npc = state["gs"].npcs.get(npc_name, {})
     col  = npc.get("color", C["text"])
 
-    pygame.draw.circle(surf, col, (x + 16, y + 16), 14)
-    draw_text(surf, "big", f"Interrogating {npc_name}", C["text_hi"], x + 36, y + 4)
-    y += 44
+    pygame.draw.circle(surf, col, (x + px(16), y + px(16)), px(14))
+    draw_text(surf, "big", f"Interrogating {npc_name}", C["text_hi"], x + px(36), y + px(4))
+    y += px(44)
     draw_text(surf, "panel_sm",
               f"{npc.get('personality','').capitalize()} {npc.get('relationship','')}  "
               f"| Pressure: {npc.get('pressure',0)}/10",
               C["text_dim"], x, y)
-    y += 24
+    y += px(24)
 
     draw_divider(surf, rect, y)
     y += 10
@@ -883,106 +917,106 @@ def draw_interrogate_overlay(surf: pygame.Surface, state: dict) -> None:
         }
         em = emotion_map.get(response.get("emotion","calm"), "")
         draw_text(surf, "panel_sm", f"{em} {response.get('emotion','calm').capitalize()}", C["amber"], x, y)
-        y += 22
+        y += px(22)
         y = draw_text(surf, "panel",
                       f'"{response.get("dialogue","")}"',
                       C["text"], x, y, max_w=w)
         y += 10
         if response.get("lie"):
             draw_text(surf, "panel_sm", "⚠ Something about this feels inconsistent.", C["red"], x, y)
-            y += 18
+            y += px(18)
     else:
         draw_text(surf, "panel_sm", "Ask the suspect a question.", C["text_dim"], x, y)
 
     # Text input
-    state["input"].rect = pygame.Rect(rect.x + 24, rect.bottom - 110, rect.w - 48, 40)
+    state["input"].rect = pygame.Rect(rect.x + px(24), rect.bottom - px(110), rect.w - px(48), px(40))
     state["input"].draw(surf)
 
     draw_text(surf, "panel_sm", "Type your question and press Enter — or click Ask",
-              C["text_dim"], x, rect.bottom - 62)
+              C["text_dim"], x, rect.bottom - px(62))
 
-    state["btn_ask"].rect    = pygame.Rect(rect.x + 24,        rect.bottom - 42, 120, 34)
-    state["btn_cancel"].rect = pygame.Rect(rect.right - 144,   rect.bottom - 42, 120, 34)
+    state["btn_ask"].rect    = pygame.Rect(rect.x + px(24),       rect.bottom - px(42), px(120), px(34))
+    state["btn_cancel"].rect = pygame.Rect(rect.right - px(144),  rect.bottom - px(42), px(120), px(34))
     state["btn_ask"].draw(surf)
     state["btn_cancel"].draw(surf)
 
 
 def draw_accuse_overlay(surf: pygame.Surface, state: dict) -> None:
-    rect = pygame.Rect(WIN_W // 2 - 360, WIN_H // 2 - 200, 720, 400)
+    rect = pygame.Rect(WIN_W // 2 - px(360), WIN_H // 2 - px(200), px(720), px(400))
     draw_overlay_bg(surf, rect)
-    x, y, w = rect.x + 24, rect.y + 20, rect.w - 48
+    x, y, w = rect.x + px(24), rect.y + px(20), rect.w - px(48)
 
     draw_text(surf, "big", "Make Your Accusation", C["text_hi"], x, y)
-    y += 48
+    y += px(48)
 
     draw_text(surf, "panel", "Select suspect:", C["text"], x, y)
-    y += 26
+    y += px(26)
     suspects = list(state["gs"].npcs.keys())
     sel = state.get("selected_suspect", "")
     for sname in suspects:
         is_sel = sname == sel
         col = NPC_PALETTE[suspects.index(sname) % len(NPC_PALETTE)]
-        pygame.draw.circle(surf, col, (x + 10, y + 10), 8)
+        pygame.draw.circle(surf, col, (x + px(10), y + px(10)), px(8))
         tc = C["text_hi"] if is_sel else C["text"]
-        bg = pygame.Rect(x + 22, y, w - 22, 22)
+        bg = pygame.Rect(x + px(22), y, w - px(22), px(22))
         if is_sel:
             pygame.draw.rect(surf, C["btn_hi"], bg, border_radius=3)
-        draw_text(surf, "panel", sname, tc, x + 24, y + 2)
-        y += 26
+        draw_text(surf, "panel", sname, tc, x + px(24), y + px(2))
+        y += px(26)
 
-    y += 8
+    y += px(8)
     draw_text(surf, "panel", "State your motive:", C["text"], x, y)
-    y += 26
-    state["input"].rect = pygame.Rect(rect.x + 24, y, rect.w - 48, 38)
+    y += px(26)
+    state["input"].rect = pygame.Rect(rect.x + px(24), y, rect.w - px(48), px(38))
     state["input"].draw(surf)
-    y += 50
+    y += px(50)
 
-    state["btn_confirm"].rect = pygame.Rect(rect.x + 24,      y, 140, 36)
-    state["btn_cancel"].rect  = pygame.Rect(rect.right - 164,  y, 140, 36)
+    state["btn_confirm"].rect = pygame.Rect(rect.x + px(24),       y, px(140), px(36))
+    state["btn_cancel"].rect  = pygame.Rect(rect.right - px(164),  y, px(140), px(36))
     state["btn_confirm"].draw(surf)
     state["btn_cancel"].draw(surf)
 
 
 def draw_notes_overlay(surf: pygame.Surface, gs: GameState, btn_close: Button) -> None:
-    rect = pygame.Rect(60, 60, WIN_W - 120, WIN_H - 120)
+    rect = pygame.Rect(px(60), px(60), WIN_W - px(120), WIN_H - px(120))
     draw_overlay_bg(surf, rect)
-    x, y, w = rect.x + 20, rect.y + 16, rect.w - 40
+    x, y, w = rect.x + px(20), rect.y + px(16), rect.w - px(40)
 
     draw_text(surf, "big", "Detective's Notes", C["text_hi"], x, y)
-    y += 44
+    y += px(44)
     draw_divider(surf, rect, y)
-    y += 8
+    y += px(8)
 
     clip = surf.get_clip()
-    surf.set_clip(pygame.Rect(x, y, w, rect.bottom - y - 60))
+    surf.set_clip(pygame.Rect(x, y, w, rect.bottom - y - px(60)))
     for note in gs.notes:
         y = draw_text(surf, "panel_sm", f"• {note}", C["text"], x, y, max_w=w)
     surf.set_clip(clip)
 
-    btn_close.rect = pygame.Rect(rect.right - 130, rect.bottom - 48, 110, 34)
+    btn_close.rect = pygame.Rect(rect.right - px(130), rect.bottom - px(48), px(110), px(34))
     btn_close.draw(surf)
 
 
 def draw_game_over(surf: pygame.Surface, state: dict) -> None:
-    rect = pygame.Rect(WIN_W // 2 - 380, WIN_H // 2 - 200, 760, 400)
+    rect = pygame.Rect(WIN_W // 2 - px(380), WIN_H // 2 - px(200), px(760), px(400))
     draw_overlay_bg(surf, rect)
-    x, y = rect.x + 30, rect.y + 30
+    x, y = rect.x + px(30), rect.y + px(30)
 
     outcome = state["gs"].outcome
     color = {"win": C["green"], "lose": C["red"], "partial": C["amber"]}.get(outcome, C["text"])
     label = {"win": "CASE SOLVED!", "lose": "CASE FAILED", "partial": "INCONCLUSIVE"}.get(outcome, "")
 
     draw_text(surf, "title", label, color, x, y)
-    y += 70
+    y += px(70)
     for line in state["gs"].outcome_msg.split("\n"):
         y = draw_text(surf, "big", line, C["text"], x, y)
-    y += 24
+    y += px(24)
     draw_text(surf, "panel_sm",
               f"Killer: {state['gs'].killer}  |  Motive: {state['gs'].motive}",
               C["text_dim"], x, y)
 
-    state["btn_restart"].rect = pygame.Rect(rect.x + 30, rect.bottom - 56, 160, 40)
-    state["btn_quit"].rect    = pygame.Rect(rect.right - 190, rect.bottom - 56, 160, 40)
+    state["btn_restart"].rect = pygame.Rect(rect.x + px(30),        rect.bottom - px(56), px(160), px(40))
+    state["btn_quit"].rect    = pygame.Rect(rect.right - px(190),   rect.bottom - px(56), px(160), px(40))
     state["btn_restart"].draw(surf)
     state["btn_quit"].draw(surf)
 
@@ -994,11 +1028,11 @@ def draw_title_screen(surf: pygame.Surface, server_ok: bool | None,
     cx = WIN_W // 2
     t1 = F["title"].render("AI MURDER MYSTERY", True, C["text_hi"])
     t2 = F["hud"].render("A turn-based mystery with LLM-driven NPCs", True, C["text_dim"])
-    surf.blit(t1, t1.get_rect(center=(cx, 180)))
-    surf.blit(t2, t2.get_rect(center=(cx, 244)))
+    surf.blit(t1, t1.get_rect(center=(cx, px(180))))
+    surf.blit(t2, t2.get_rect(center=(cx, px(244))))
 
     # decorative divider
-    pygame.draw.line(surf, C["border"], (cx - 200, 268), (cx + 200, 268))
+    pygame.draw.line(surf, C["border"], (cx - px(200), px(268)), (cx + px(200), px(268)))
 
     # Server status
     if server_ok is None:
@@ -1009,10 +1043,10 @@ def draw_title_screen(surf: pygame.Surface, server_ok: bool | None,
         st, sc = "✗  LLM server offline — fallback mode will be used", C["amber"]
 
     s = F["hud"].render(st, True, sc)
-    surf.blit(s, s.get_rect(center=(cx, 300)))
+    surf.blit(s, s.get_rect(center=(cx, px(300))))
 
-    btn_start.rect = pygame.Rect(cx - 120, 360, 240, 52)
-    btn_check.rect = pygame.Rect(cx - 80, 430, 160, 36)
+    btn_start.rect = pygame.Rect(cx - px(120), px(360), px(240), px(52))
+    btn_check.rect = pygame.Rect(cx - px(80),  px(430), px(160), px(36))
     btn_start.draw(surf)
     btn_check.draw(surf)
 
@@ -1021,11 +1055,11 @@ def draw_title_screen(surf: pygame.Surface, server_ok: bool | None,
         "Use the side panel to Interrogate, End Turn, or Accuse",
         "Identify the killer and their motive before 15 turns pass",
     ]
-    iy = 500
+    iy = px(500)
     for line in instructions:
         s = F["panel_sm"].render(line, True, C["text_dim"])
         surf.blit(s, s.get_rect(center=(cx, iy)))
-        iy += 22
+        iy += px(22)
 
 
 def draw_loading_screen(surf: pygame.Surface, tick: int) -> None:
@@ -1034,7 +1068,7 @@ def draw_loading_screen(surf: pygame.Surface, tick: int) -> None:
     t = F["big"].render(f"Generating mystery{dots}", True, C["text_hi"])
     surf.blit(t, t.get_rect(center=(WIN_W // 2, WIN_H // 2)))
     t2 = F["panel_sm"].render("Asking the LLM to devise a murder…", True, C["text_dim"])
-    surf.blit(t2, t2.get_rect(center=(WIN_W // 2, WIN_H // 2 + 50)))
+    surf.blit(t2, t2.get_rect(center=(WIN_W // 2, WIN_H // 2 + px(50))))
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1058,7 +1092,14 @@ class Game:
     def __init__(self) -> None:
         pygame.init()
         pygame.display.set_caption(TITLE)
-        self.surf = pygame.display.set_mode((WIN_W, WIN_H))
+
+        # Detect Retina / HiDPI: SDL_WINDOW_ALLOW_HIGHDPI = 0x2000
+        _SDL_HIGHDPI = 0x2000
+        _probe = pygame.display.set_mode((1280, 720), _SDL_HIGHDPI)
+        _dpr = max(1, _probe.get_width() // 1280)
+        _apply_dpr(_dpr)
+
+        self.surf = pygame.display.set_mode((WIN_W, WIN_H), _SDL_HIGHDPI)
         self.clock = pygame.time.Clock()
         _init_fonts()
 
@@ -1082,11 +1123,11 @@ class Game:
         # Overlay states
         self.interrogate_state: dict = {}
         self.accuse_state: dict      = {}
-        self.btn_notes_close = Button(pygame.Rect(0,0,110,34), "Close")
+        self.btn_notes_close = Button(pygame.Rect(0, 0, px(110), px(34)), "Close")
 
         # Title screen buttons
-        self.btn_start = Button(pygame.Rect(0,0,240,52), "New Investigation")
-        self.btn_check = Button(pygame.Rect(0,0,160,36), "Check Server")
+        self.btn_start = Button(pygame.Rect(0, 0, px(240), px(52)), "New Investigation")
+        self.btn_check = Button(pygame.Rect(0, 0, px(160), px(36)), "Check Server")
 
         # Game-over buttons
         self.go_state: dict = {}
@@ -1094,9 +1135,9 @@ class Game:
     # ── Panel button layout ─────────────────────────────────────────────
 
     def _build_panel_buttons(self) -> None:
-        bx = SIDE_RECT.x + 10
-        bw = SIDE_RECT.w - 20
-        by = SIDE_RECT.y + 310   # approximate starting y; adjusted at draw time
+        bx = SIDE_RECT.x + px(10)
+        bw = SIDE_RECT.w - px(20)
+        by = SIDE_RECT.y + px(310)   # approximate starting y; adjusted at draw time
 
         specs = [
             ("examine",     "Examine Selected",    True),
@@ -1105,7 +1146,7 @@ class Game:
             ("accuse",      "Accuse…",              True),
             ("notes",       "View Notes",           True),
         ]
-        bh, gap = 36, 6
+        bh, gap = px(36), px(6)
         for i, (key, label, enabled) in enumerate(specs):
             self.panel_btns[key] = Button(
                 pygame.Rect(bx, by + i * (bh + gap), bw, bh),
@@ -1115,9 +1156,9 @@ class Game:
     def _update_panel_button_positions(self) -> None:
         """Re-stack buttons below the dynamic content in the side panel."""
         # Place buttons at a fixed y so they don't overlap NPC/evidence lists
-        base_y = SIDE_RECT.y + SIDE_RECT.h - 260
-        bx, bw = SIDE_RECT.x + 10, SIDE_RECT.w - 20
-        bh, gap = 36, 6
+        base_y = SIDE_RECT.y + SIDE_RECT.h - px(260)
+        bx, bw = SIDE_RECT.x + px(10), SIDE_RECT.w - px(20)
+        bh, gap = px(36), px(6)
         for i, btn in enumerate(self.panel_btns.values()):
             btn.rect = pygame.Rect(bx, base_y + i * (bh + gap), bw, bh)
 
@@ -1338,9 +1379,9 @@ class Game:
             "gs":         self.gs,
             "response":   None,
             "waiting":    False,
-            "input":      TextInput(pygame.Rect(0,0,792,40), placeholder="Type your question…"),
-            "btn_ask":    Button(pygame.Rect(0,0,120,34), "Ask"),
-            "btn_cancel": Button(pygame.Rect(0,0,120,34), "Close"),
+            "input":      TextInput(pygame.Rect(0, 0, px(792), px(40)), placeholder="Type your question…"),
+            "btn_ask":    Button(pygame.Rect(0, 0, px(120), px(34)), "Ask"),
+            "btn_cancel": Button(pygame.Rect(0, 0, px(120), px(34)), "Close"),
         }
 
     def _handle_interrogate(self, event: pygame.event.Event) -> None:
@@ -1371,9 +1412,9 @@ class Game:
         self.accuse_state = {
             "gs":               self.gs,
             "selected_suspect": suspects[0] if suspects else "",
-            "input":            TextInput(pygame.Rect(0,0,672,38), placeholder="e.g. to prevent exposure of embezzlement"),
-            "btn_confirm":      Button(pygame.Rect(0,0,140,36), "Accuse!"),
-            "btn_cancel":       Button(pygame.Rect(0,0,140,36), "Cancel"),
+            "input":            TextInput(pygame.Rect(0, 0, px(672), px(38)), placeholder="e.g. to prevent exposure of embezzlement"),
+            "btn_confirm":      Button(pygame.Rect(0, 0, px(140), px(36)), "Accuse!"),
+            "btn_cancel":       Button(pygame.Rect(0, 0, px(140), px(36)), "Cancel"),
         }
 
     def _handle_accuse(self, event: pygame.event.Event) -> None:
@@ -1394,14 +1435,14 @@ class Game:
         # Suspect selection by clicking name
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             suspects = list(self.gs.npcs.keys())
-            rect = pygame.Rect(WIN_W // 2 - 360, WIN_H // 2 - 200, 720, 400)
-            y = rect.y + 94
+            rect = pygame.Rect(WIN_W // 2 - px(360), WIN_H // 2 - px(200), px(720), px(400))
+            y = rect.y + px(94)
             for sname in suspects:
-                row = pygame.Rect(rect.x + 46, y, rect.w - 70, 22)
+                row = pygame.Rect(rect.x + px(46), y, rect.w - px(70), px(22))
                 if row.collidepoint(event.pos):
                     st["selected_suspect"] = sname
                     return
-                y += 26
+                y += px(26)
 
         st["input"].handle_event(event)
 
@@ -1412,8 +1453,8 @@ class Game:
         self.overlay = Overlay.NONE
         self.go_state = {
             "gs":          self.gs,
-            "btn_restart": Button(pygame.Rect(0,0,160,40), "New Game"),
-            "btn_quit":    Button(pygame.Rect(0,0,160,40), "Quit"),
+            "btn_restart": Button(pygame.Rect(0, 0, px(160), px(40)), "New Game"),
+            "btn_quit":    Button(pygame.Rect(0, 0, px(160), px(40)), "Quit"),
         }
 
     # ── Drawing ─────────────────────────────────────────────────────────
