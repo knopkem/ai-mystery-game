@@ -1165,12 +1165,13 @@ def draw_game_over(surf: pygame.Surface, state: dict) -> None:
 
     draw_text(surf, "title", label, color, x, y)
     y += px(70)
+    max_w = rect.width - px(60)
     for line in state["gs"].outcome_msg.split("\n"):
-        y = draw_text(surf, "big", line, C["text"], x, y)
+        y = draw_text(surf, "big", line, C["text"], x, y, max_w=max_w)
     y += px(24)
     draw_text(surf, "panel_sm",
               f"Killer: {state['gs'].killer}  |  Motive: {state['gs'].motive}",
-              C["text_dim"], x, y)
+              C["text_dim"], x, y, max_w=max_w)
 
     state["btn_restart"].rect = pygame.Rect(rect.x + px(30),        rect.bottom - px(56), px(160), px(40))
     state["btn_quit"].rect    = pygame.Rect(rect.right - px(190),   rect.bottom - px(56), px(160), px(40))
