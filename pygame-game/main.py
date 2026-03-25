@@ -1413,10 +1413,12 @@ class Game:
         if self.panel_btns["examine"].is_clicked(event):
             self.gs.examine(self.selected_ev)
             self.selected_ev = ""
+            self._maybe_trigger_npc()
 
         elif self.panel_btns["interrogate"].is_clicked(event):
             if self.gs.spend_for_interrogate():
                 self._open_interrogate(self.selected_npc)
+            # NPC phase (if AP ran out) is triggered when the overlay closes
 
         elif self.panel_btns["end_turn"].is_clicked(event):
             self.gs.phase = Phase.NPC
@@ -1491,6 +1493,11 @@ class Game:
         self.thinking = True
         self.client.request_npc_actions(self.gs.as_dict())
 
+    def _maybe_trigger_npc(self) -> None:
+        """Call after any player action — fires NPC phase if AP just ran out."""
+        if self.gs.phase == Phase.NPC and not self.thinking:
+            self._trigger_npc_phase()
+
     # ── Interrogation overlay ───────────────────────────────────────────
 
     def _open_interrogate(self, npc_name: str) -> None:
@@ -1509,6 +1516,7 @@ class Game:
         st = self.interrogate_state
         if st["btn_cancel"].is_clicked(event):
             self.overlay = Overlay.NONE
+            self._maybe_trigger_npc()  # fire NPC phase if interrogation used the last AP
             return
 
         submitted = st["input"].handle_event(event)
