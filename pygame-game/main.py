@@ -499,8 +499,16 @@ def _fallback_interrogate(npc: dict, question: str, evidence_shown: list[str]) -
 
     dialogue = ""
 
-    # ── Evidence reaction ────────────────────────────────────────────────
-    if evidence_shown:
+    # ── Evidence reaction (only when question is about evidence) ─────────
+    ev_keywords = ["this", "found", "evidence", "item", "object", "what is", "explain"]
+    ev_names    = [e.replace("_", " ") for e in evidence_shown]
+    asking_about_evidence = (
+        evidence_shown and (
+            any(kw in q for kw in ev_keywords)
+            or any(en in q for en in ev_names)
+        )
+    )
+    if asking_about_evidence:
         ev = evidence_shown[-1].replace("_", " ")
         if is_killer:
             lie = True
@@ -513,7 +521,7 @@ def _fallback_interrogate(npc: dict, question: str, evidence_shown: list[str]) -
             dialogue = f"That {ev}? I noticed it near the {other_room} earlier but thought nothing of it."
 
     # ── Alibi / whereabouts ──────────────────────────────────────────────
-    elif any(w in q for w in ["where", "alibi", "doing", "were you", "location", "night", "evening", "time"]):
+    elif any(w in q for w in ["where", "alibi", "doing", "were you", "location", "night", "evening", "time", "murder"]):
         if is_killer:
             lie = True
             fa = false_alibi or f"was in the {random.choice(ROOMS)} all evening"
@@ -1195,7 +1203,7 @@ def draw_interrogate_overlay(surf: pygame.Surface, state: dict) -> None:
 
     npc_name = state["npc_name"]
     npc = state["gs"].npcs.get(npc_name, {})
-    col  = npc.get("color", C["text"])
+    col = npc.get("color", C["text"])
 
     pygame.draw.circle(surf, col, (x + px(16), y + px(16)), px(14))
     draw_text(surf, "big", f"Interrogating {npc_name}", C["text_hi"], x + px(36), y + px(4))
@@ -1205,41 +1213,57 @@ def draw_interrogate_overlay(surf: pygame.Surface, state: dict) -> None:
               f"| Pressure: {npc.get('pressure',0)}/10",
               C["text_dim"], x, y)
     y += px(24)
-
     draw_divider(surf, rect, y)
-    y += 10
+    y += px(10)
 
-    # Response area
-    response = state.get("response")
+    # ── Conversation history area ────────────────────────────────────────
+    history_bottom = rect.bottom - px(120)   # reserve space for input + buttons
+    clip_rect = pygame.Rect(x, y, w, history_bottom - y)
+    surf.set_clip(clip_rect)
+
+    emotion_map = {
+        "calm": "😐", "nervous": "😰", "angry": "😠",
+        "defensive": "🛡", "tearful": "😢", "smug": "😏",
+    }
+
+    history = state.get("history", [])
+    if not history and not state.get("waiting"):
+        draw_text(surf, "panel_sm", "Ask the suspect a question.", C["text_dim"], x, y)
+    else:
+        # Draw older entries dimmed; keep track so newest is always visible
+        entries_to_draw = history[-4:]  # show at most last 4 exchanges
+        for entry in entries_to_draw:
+            q   = entry["question"]
+            resp = entry["response"]
+            # Question line
+            draw_text(surf, "panel_sm", f"You:  {q}", C["text_dim"], x, y, max_w=w)
+            y += px(18)
+            em = emotion_map.get(resp.get("emotion", "calm"), "")
+            draw_text(surf, "panel_sm",
+                      f"{em} {resp.get('emotion','calm').capitalize()}",
+                      C["amber"], x, y)
+            y += px(18)
+            y = draw_text(surf, "panel",
+                          f'"{resp.get("dialogue","")}"',
+                          C["text"], x, y, max_w=w)
+            if resp.get("lie"):
+                draw_text(surf, "panel_sm", "⚠ Something about this feels inconsistent.",
+                          C["red"], x, y)
+                y += px(16)
+            y += px(8)
+
     if state.get("waiting"):
         draw_text(surf, "panel", "⏳  Awaiting response…", C["amber"], x, y)
-    elif response:
-        emotion_map = {
-            "calm":"😐", "nervous":"😰", "angry":"😠",
-            "defensive":"🛡", "tearful":"😢", "smug":"😏",
-        }
-        em = emotion_map.get(response.get("emotion","calm"), "")
-        draw_text(surf, "panel_sm", f"{em} {response.get('emotion','calm').capitalize()}", C["amber"], x, y)
-        y += px(22)
-        y = draw_text(surf, "panel",
-                      f'"{response.get("dialogue","")}"',
-                      C["text"], x, y, max_w=w)
-        y += 10
-        if response.get("lie"):
-            draw_text(surf, "panel_sm", "⚠ Something about this feels inconsistent.", C["red"], x, y)
-            y += px(18)
-    else:
-        draw_text(surf, "panel_sm", "Ask the suspect a question.", C["text_dim"], x, y)
 
-    # Text input
+    surf.set_clip(None)
+
+    # ── Input + buttons ──────────────────────────────────────────────────
     state["input"].rect = pygame.Rect(rect.x + px(24), rect.bottom - px(110), rect.w - px(48), px(40))
     state["input"].draw(surf)
-
     draw_text(surf, "panel_sm", "Type your question and press Enter — or click Ask",
               C["text_dim"], x, rect.bottom - px(62))
-
-    state["btn_ask"].rect    = pygame.Rect(rect.x + px(24),       rect.bottom - px(42), px(120), px(34))
-    state["btn_cancel"].rect = pygame.Rect(rect.right - px(144),  rect.bottom - px(42), px(120), px(34))
+    state["btn_ask"].rect    = pygame.Rect(rect.x + px(24),      rect.bottom - px(42), px(120), px(34))
+    state["btn_cancel"].rect = pygame.Rect(rect.right - px(144), rect.bottom - px(42), px(120), px(34))
     state["btn_ask"].draw(surf)
     state["btn_cancel"].draw(surf)
 
@@ -1605,6 +1629,7 @@ class Game:
 
         elif tag == "interrogate":
             self.thinking = False
+            q = self.interrogate_state.get("last_question", "")
             if data:
                 self.gs.record_interrogation(
                     self.interrogate_state.get("npc_name", ""),
@@ -1612,17 +1637,18 @@ class Game:
                 )
                 self.interrogate_state["response"] = data
                 self.interrogate_state["waiting"]  = False
+                self.interrogate_state["history"].append({"question": q, "response": data})
             else:
                 npc_name = self.interrogate_state.get("npc_name", "")
-                question = self.interrogate_state.get("input", TextInput(pygame.Rect(0,0,0,0))).text
                 fallback = _fallback_interrogate(
                     self.gs.npc_dict(npc_name) if npc_name in self.gs.npcs else {},
-                    question,
+                    q,
                     self.gs.found_evidence,
                 )
                 self.gs.record_interrogation(npc_name, fallback)
                 self.interrogate_state["response"] = fallback
                 self.interrogate_state["waiting"]  = False
+                self.interrogate_state["history"].append({"question": q, "response": fallback})
 
     def _apply_fallback_setup(self) -> None:
         """Used when the LLM server is offline at game start."""
@@ -1801,6 +1827,7 @@ class Game:
             "gs":         self.gs,
             "response":   None,
             "waiting":    False,
+            "history":    [],   # list of {"question": str, "response": dict}
             "input":      TextInput(pygame.Rect(0, 0, px(792), px(40)), placeholder="Type your question…"),
             "btn_ask":    Button(pygame.Rect(0, 0, px(120), px(34)), "Ask"),
             "btn_cancel": Button(pygame.Rect(0, 0, px(120), px(34)), "Close"),
@@ -1817,9 +1844,11 @@ class Game:
         if (st["btn_ask"].is_clicked(event) or submitted) and not st.get("waiting"):
             question = st["input"].text.strip()
             if question:
-                st["waiting"]  = True
-                st["response"] = None
-                self.thinking  = True
+                st["waiting"]       = True
+                st["response"]      = None
+                st["last_question"] = question
+                st["input"].text    = ""   # clear input immediately
+                self.thinking = True
                 self.client.request_interrogate(
                     self.gs.npc_dict(st["npc_name"]),
                     question,
