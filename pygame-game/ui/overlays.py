@@ -33,10 +33,10 @@ def draw_interrogate_overlay(surf: pygame.Surface, state: dict) -> None:
     draw_divider(surf, rect, y)
     y += px(10)
 
-    # ── Conversation history area ────────────────────────────────────────
+    # ── Conversation history — render to tall surface, blit bottom slice ─
+    history_top    = y
     history_bottom = rect.bottom - px(120)   # reserve space for input + buttons
-    clip_rect = pygame.Rect(x, y, w, history_bottom - y)
-    surf.set_clip(clip_rect)
+    avail_h        = history_bottom - history_top
 
     emotion_map = {
         "calm": "😐", "nervous": "😰", "angry": "😠",
@@ -44,35 +44,45 @@ def draw_interrogate_overlay(surf: pygame.Surface, state: dict) -> None:
     }
 
     history = state.get("history", [])
+
+    # Render all content onto an oversized surface so we can auto-scroll
+    CONTENT_H = max(avail_h, px(4000))
+    content = pygame.Surface((w, CONTENT_H), pygame.SRCALPHA)
+    cy = 0  # cursor on content surface
+
     if not history and not state.get("waiting"):
-        draw_text(surf, "panel_sm", "Ask the suspect a question.", C["text_dim"], x, y)
+        draw_text(content, "panel_sm", "Ask the suspect a question.", C["text_dim"], 0, cy)
     else:
-        # Draw older entries dimmed; keep track so newest is always visible
-        entries_to_draw = history[-4:]  # show at most last 4 exchanges
-        for entry in entries_to_draw:
-            q   = entry["question"]
+        for entry in history:
+            q    = entry["question"]
             resp = entry["response"]
-            # Question line
-            draw_text(surf, "panel_sm", f"You:  {q}", C["text_dim"], x, y, max_w=w)
-            y += px(18)
+            draw_text(content, "panel_sm", f"You:  {q}", C["text_dim"], 0, cy, max_w=w)
+            cy += px(18)
             em = emotion_map.get(resp.get("emotion", "calm"), "")
-            draw_text(surf, "panel_sm",
+            draw_text(content, "panel_sm",
                       f"{em} {resp.get('emotion','calm').capitalize()}",
-                      C["amber"], x, y)
-            y += px(18)
-            y = draw_text(surf, "panel",
-                          f'"{resp.get("dialogue","")}"',
-                          C["text"], x, y, max_w=w)
+                      C["amber"], 0, cy)
+            cy += px(18)
+            cy = draw_text(content, "panel",
+                           f'"{resp.get("dialogue","")}"',
+                           C["text"], 0, cy, max_w=w)
             if resp.get("lie"):
-                draw_text(surf, "panel_sm", "⚠ Something about this feels inconsistent.",
-                          C["red"], x, y)
-                y += px(16)
-            y += px(8)
+                draw_text(content, "panel_sm", "⚠ Something about this feels inconsistent.",
+                          C["red"], 0, cy)
+                cy += px(16)
+            cy += px(8)
 
     if state.get("waiting"):
-        draw_text(surf, "panel", "⏳  Awaiting response…", C["amber"], x, y)
+        draw_text(content, "panel", "⏳  Awaiting response…", C["amber"], 0, cy)
+        cy += px(24)
 
-    surf.set_clip(None)
+    # scroll offset: keep newest content pinned to bottom of the visible area
+    scroll_y = max(0, cy - avail_h)
+
+    old_clip = surf.get_clip()
+    surf.set_clip(pygame.Rect(x, history_top, w, avail_h))
+    surf.blit(content, (x, history_top), pygame.Rect(0, scroll_y, w, avail_h))
+    surf.set_clip(old_clip)
 
     # ── Input + buttons ──────────────────────────────────────────────────
     state["input"].rect = pygame.Rect(rect.x + px(24), rect.bottom - px(110), rect.w - px(48), px(40))
@@ -83,6 +93,7 @@ def draw_interrogate_overlay(surf: pygame.Surface, state: dict) -> None:
     state["btn_cancel"].rect = pygame.Rect(rect.right - px(144), rect.bottom - px(42), px(120), px(34))
     state["btn_ask"].draw(surf)
     state["btn_cancel"].draw(surf)
+
 
 
 def draw_accuse_overlay(surf: pygame.Surface, state: dict) -> None:
