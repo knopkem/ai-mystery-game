@@ -177,10 +177,16 @@ def train(epochs: int, batch_size: int, output_dir: Path,
                 num_train_epochs=1,          # one epoch per trainer call
                 learning_rate=2e-4,
                 logging_steps=20,
-                save_strategy="no",          # we save manually below
+                # Step-level saves: LoRA adapters are ~50-100MB so saving
+                # every 50 steps is cheap. On a crash/OOM you lose at most
+                # 50 steps rather than the whole epoch.
+                # save_total_limit=3 keeps only the last 3 to avoid disk bloat.
+                save_strategy="steps",
+                save_steps=50,
+                save_total_limit=3,
                 eval_strategy="no",          # no eval — reduces heat spikes
-                output_dir=str(output_dir),
-                warmup_ratio=0.05 if epoch == 1 else 0.0,   # warmup first epoch only
+                output_dir=str(output_dir / f"steps-epoch{epoch}"),
+                warmup_ratio=0.05 if epoch == 1 else 0.0,
                 lr_scheduler_type="cosine",
                 seed=42 + epoch,
             ),
