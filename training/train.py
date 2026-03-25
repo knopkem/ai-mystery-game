@@ -1,5 +1,5 @@
 """
-Fine-tune Qwen2.5-3B with mlx-tune (Apple Silicon MLX) + LoRA.
+Fine-tune an instruction-tuned model with mlx-tune (Apple Silicon MLX) + LoRA.
 
 mlx-tune is a community-built Unsloth-compatible fine-tuning library for
 Apple Silicon. It uses the same FastLanguageModel / SFTTrainer API as Unsloth
@@ -9,7 +9,18 @@ but runs natively on MLX — no CUDA, no Triton required.
   mlx-tune (Apple Si):  from mlx_tune import FastLanguageModel   ← same API
 
 Usage:
-  python train.py [--epochs 3] [--batch-size 2] [--output ./checkpoints]
+  python train.py [--model <model_id>] [--epochs 3] [--batch-size 2] [--output ./checkpoints]
+
+Recommended models (all available pre-quantised on mlx-community):
+
+  Model                                           Size   Speed   Quality
+  ─────────────────────────────────────────────────────────────────────
+  mlx-community/Meta-Llama-3.1-8B-Instruct-4bit  ~4 GB  medium  ★★★★★  (default)
+  mlx-community/Mistral-7B-Instruct-v0.3-4bit    ~3.5GB medium  ★★★★☆
+  mlx-community/Phi-3.5-mini-instruct-4bit        ~2 GB  fast    ★★★★☆
+  mlx-community/Qwen2.5-3B-Instruct-4bit          ~1.5GB fast    ★★★☆☆
+
+All fit comfortably in 16 GB RAM including LoRA training overhead.
 
 Requirements:
   pip install -r requirements-train.txt   # installs mlx-tune, mlx, mlx-lm
@@ -34,8 +45,15 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 DATA_DIR = Path(__file__).parent / "data"
 DEFAULT_OUTPUT = Path(__file__).parent / "checkpoints"
 
-# mlx-community hosts MLX-quantized models — use 4-bit for 16GB RAM
-BASE_MODEL = "mlx-community/Qwen2.5-3B-Instruct-4bit"
+# Default: Llama 3.1 8B — best balance of quality and speed on M-series Macs.
+# Override with --model (see docstring for alternatives).
+DEFAULT_MODEL = "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"
+
+# Batch size recommendation per model size:
+#   8B → batch 2, grad_accum 2  (effective 4)
+#   7B → batch 2, grad_accum 2
+#   3-4B → batch 4, grad_accum 1
+DEFAULT_BATCH = 2
 
 ALPACA_TEMPLATE = """\
 Below is an instruction that describes a task, paired with an input that provides further context. \
@@ -87,7 +105,7 @@ def format_example(example: dict) -> str:
 # Training
 # ---------------------------------------------------------------------------
 
-def train(epochs: int, batch_size: int, output_dir: Path, max_seq_length: int):
+def train(epochs: int, batch_size: int, output_dir: Path, max_seq_length: int, model_name: str):
     try:
         # mlx-tune mirrors the Unsloth API — just change the import source
         from mlx_tune import FastLanguageModel, SFTTrainer, SFTConfig  # type: ignore
@@ -101,9 +119,9 @@ def train(epochs: int, batch_size: int, output_dir: Path, max_seq_length: int):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # --- Load base model from mlx-community (pre-quantized for Apple Silicon) ---
-    log.info("Loading base model: %s", BASE_MODEL)
+    log.info("Loading base model: %s", model_name)
     model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=BASE_MODEL,
+        model_name=model_name,
         max_seq_length=max_seq_length,
         load_in_4bit=True,
     )
@@ -164,7 +182,8 @@ def train(epochs: int, batch_size: int, output_dir: Path, max_seq_length: int):
     model.save_pretrained(str(mlx_path))
     tokenizer.save_pretrained(str(mlx_path))
     log.info("MLX model saved to %s", mlx_path)
-    log.info("Copy to server: cp -r %s ../llm-server/model/mlx-model", mlx_path)
+    log.info("Copy to server:  cp -r %s ../llm-server/model/mlx-model", mlx_path)
+    log.info("Then start server: cd ../llm-server && uvicorn server:app --host 127.0.0.1 --port 8000")
 
     # --- Also save merged model for optional GGUF export ---
     merged_path = output_dir / "merged"
@@ -190,13 +209,27 @@ def _count_params(model) -> str:
 # ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="Fine-tune Qwen2.5-3B with Unsloth")
-    parser.add_argument("--epochs", type=int, default=3)
-    parser.add_argument("--batch-size", type=int, default=2)
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument("--max-seq-length", type=int, default=2048)
+    parser = argparse.ArgumentParser(
+        description="Fine-tune a model for the murder mystery game on Apple Silicon",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help=(
+            "mlx-community model ID to fine-tune. Options:\n"
+            "  mlx-community/Meta-Llama-3.1-8B-Instruct-4bit  (default, recommended)\n"
+            "  mlx-community/Mistral-7B-Instruct-v0.3-4bit\n"
+            "  mlx-community/Phi-3.5-mini-instruct-4bit\n"
+            "  mlx-community/Qwen2.5-3B-Instruct-4bit"
+        ),
+    )
+    parser.add_argument("--epochs",          type=int,  default=3)
+    parser.add_argument("--batch-size",      type=int,  default=DEFAULT_BATCH)
+    parser.add_argument("--output",          type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--max-seq-length",  type=int,  default=2048)
     args = parser.parse_args()
-    train(args.epochs, args.batch_size, args.output, args.max_seq_length)
+    train(args.epochs, args.batch_size, args.output, args.max_seq_length, args.model)
 
 
 if __name__ == "__main__":
