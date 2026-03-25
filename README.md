@@ -83,6 +83,7 @@ pip install -r requirements.txt
 pip install huggingface_hub
 
 # Download Llama 3.1 8B 4-bit (~4 GB, one-time)
+# The HF_TOKEN is optional (but it might be very slow to download then -> better create a free account and generate a token)
 HF_TOKEN=hf_your_token python3 -c "
 from huggingface_hub import snapshot_download
 snapshot_download('mlx-community/Meta-Llama-3.1-8B-Instruct-4bit', local_dir='model/mlx-model')
