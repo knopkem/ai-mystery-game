@@ -663,24 +663,28 @@ def draw_room(surf: pygame.Surface, name: str, gs: GameState,
     ev_items = gs.evidence_in_room(name)
     ex = rect.x + 8
     ey = rect.y + 30
+    max_ev_w = rect.w - 30  # leave space for NPC circles on the right
     for item in ev_items:
-        short = item[:10].replace("_", " ")
+        label = item.replace("_", " ")
         sel = item == selected_ev
-        bc  = C["border_hi"] if sel else C["gold"]
         ic  = pygame.Rect(ex, ey, 14, 14)
         pygame.draw.rect(surf, C["gold"] if not sel else (255, 240, 100), ic, border_radius=2)
         if sel:
             pygame.draw.rect(surf, C["border_hi"], ic, 1, border_radius=2)
-        et = F["room_sm"].render(short, True, C["gold"] if not sel else C["text_hi"])
-        surf.blit(et, (ex + 18, ey))
+        et = F["room_sm"].render(label, True, C["gold"] if not sel else C["text_hi"])
+        # Clip the label so it never overflows the room width
+        clip_w = min(et.get_width(), rect.right - ex - 18 - 4)
+        surf.blit(et, (ex + 18, ey), area=pygame.Rect(0, 0, clip_w, et.get_height()))
         ey += 18
         if ey > rect.bottom - 20:
             break
 
-    # NPCs in this room
+    # NPCs in this room — draw inside a clip rect so labels never escape the border
     npcs_here = gs.npcs_in_room(name)
     nx = rect.right - 12
     ny = rect.y + rect.h - 32
+    old_clip = surf.get_clip()
+    surf.set_clip(rect)
     for npc in npcs_here:
         first = npc["name"].split()[0]
         is_sel = npc["name"] == selected_npc
@@ -696,6 +700,7 @@ def draw_room(surf: pygame.Surface, name: str, gs: GameState,
         nt = F["room_sm"].render(first, True, (255, 255, 255))
         surf.blit(nt, (cx - nt.get_width() // 2, cy + radius + 1))
         nx -= radius * 2 + 24
+    surf.set_clip(old_clip)
 
     # Pressure indicator for visible NPCs
     if npcs_here and is_current:
