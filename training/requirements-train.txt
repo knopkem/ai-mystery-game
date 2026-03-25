@@ -4,4 +4,4 @@ mlx>=0.20
 mlx-lm>=0.20
 datasets>=3.0
 transformers>=4.45   # tokenizer only; no torch training loop needed
-openai>=1.0          # for synthetic data generation via cloud LLM
+anthropic>=0.30        # for synthetic data generation via Claude

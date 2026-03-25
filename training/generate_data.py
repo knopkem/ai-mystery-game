@@ -1,8 +1,7 @@
 """
 Synthetic training data generation.
 
-Uses a cloud LLM (OpenAI-compatible API) to generate ~2700 training examples
-across three categories:
+Uses Anthropic Claude to generate ~2700 training examples across three categories:
   A. NPC Action Decisions    (~1500 examples)
   B. Interrogation Responses (~1000 examples)
   C. Mystery Setups          (~200 examples)
@@ -11,7 +10,7 @@ Output: JSONL files in data/ — each line is Alpaca-format:
   {"instruction": "...", "input": "...", "output": "..."}
 
 Usage:
-  OPENAI_API_KEY=sk-... python generate_data.py [--target 2700] [--model gpt-4o]
+  ANTHROPIC_API_KEY=sk-ant-... python generate_data.py [--target 2700] [--model claude-haiku-4-5]
 """
 from __future__ import annotations
 
@@ -23,7 +22,7 @@ import random
 import sys
 from pathlib import Path
 
-from openai import OpenAI
+import anthropic
 
 log = logging.getLogger("data-gen")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
@@ -172,16 +171,20 @@ Return:
 # Generation helpers
 # ---------------------------------------------------------------------------
 
-def _call(client: OpenAI, model: str, system: str, user: str) -> dict | None:
+def _call(client: anthropic.Anthropic, model: str, system: str, user: str) -> dict | None:
     try:
-        resp = client.chat.completions.create(
+        resp = client.messages.create(
             model=model,
-            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-            temperature=0.85,
             max_tokens=1024,
-            response_format={"type": "json_object"},
+            system=system + " Return ONLY valid JSON — no markdown, no explanation.",
+            messages=[{"role": "user", "content": user}],
         )
-        raw = resp.choices[0].message.content
+        raw = resp.content[0].text.strip()
+        # Strip any accidental markdown fences
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
         return json.loads(raw)
     except Exception as exc:
         log.warning("Cloud LLM call failed: %s", exc)
@@ -227,7 +230,7 @@ SAMPLE_QUESTIONS = [
 # Per-category generators
 # ---------------------------------------------------------------------------
 
-def generate_npc_actions(client: OpenAI, model: str, count: int) -> list[dict]:
+def generate_npc_actions(client: anthropic.Anthropic, model: str, count: int) -> list[dict]:
     examples = []
     log.info("Generating %d NPC action examples...", count)
     for i in range(count):
@@ -263,7 +266,7 @@ def generate_npc_actions(client: OpenAI, model: str, count: int) -> list[dict]:
     return examples
 
 
-def generate_interrogations(client: OpenAI, model: str, count: int) -> list[dict]:
+def generate_interrogations(client: anthropic.Anthropic, model: str, count: int) -> list[dict]:
     examples = []
     log.info("Generating %d interrogation examples...", count)
     for i in range(count):
@@ -296,7 +299,7 @@ def generate_interrogations(client: OpenAI, model: str, count: int) -> list[dict
     return examples
 
 
-def generate_mystery_setups(client: OpenAI, model: str, count: int) -> list[dict]:
+def generate_mystery_setups(client: anthropic.Anthropic, model: str, count: int) -> list[dict]:
     examples = []
     log.info("Generating %d mystery setup examples...", count)
     for i in range(count):
@@ -326,14 +329,14 @@ def save_jsonl(examples: list[dict], path: Path):
 def main():
     parser = argparse.ArgumentParser(description="Generate synthetic training data")
     parser.add_argument("--target", type=int, default=2700, help="Total examples to generate")
-    parser.add_argument("--model", default="gpt-4o", help="Cloud LLM model to use")
+    parser.add_argument("--model", default="claude-haiku-4-5", help="Anthropic model to use")
     args = parser.parse_args()
 
-    api_key = os.getenv("OPENAI_API_KEY")
+    api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
-        sys.exit("Error: OPENAI_API_KEY environment variable not set.")
+        sys.exit("Error: ANTHROPIC_API_KEY environment variable not set.")
 
-    client = OpenAI(api_key=api_key)
+    client = anthropic.Anthropic(api_key=api_key)
 
     # Proportional split: 55% actions, 37% interrogations, 8% setups
     n_actions = int(args.target * 0.55)
