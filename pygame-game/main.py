@@ -788,7 +788,9 @@ def draw_hud(surf: pygame.Surface, gs: GameState) -> None:
 
 def draw_panel(surf: pygame.Surface, gs: GameState,
                buttons: dict[str, Button], selected_npc: str, selected_ev: str,
-               thinking: bool) -> None:
+               thinking: bool, clickables: dict) -> None:
+    """Draw side panel. Populates `clickables` with {"npc:<name>": Rect, "ev:<item>": Rect}."""
+    clickables.clear()
     pygame.draw.rect(surf, C["panel"], SIDE_RECT)
     pygame.draw.line(surf, C["border"], (SIDE_RECT.x, SIDE_RECT.y),
                      (SIDE_RECT.x, SIDE_RECT.bottom))
@@ -802,14 +804,21 @@ def draw_panel(surf: pygame.Surface, gs: GameState,
     y += px(4)
     if npcs_here:
         for npc in npcs_here:
-            col  = npc["color"]
+            row_rect = pygame.Rect(x0, y, w, px(22))
             sel  = npc["name"] == selected_npc
+            hovered = row_rect.collidepoint(pygame.mouse.get_pos())
+            if sel:
+                pygame.draw.rect(surf, C["btn_hi"], row_rect, border_radius=px(3))
+            elif hovered:
+                pygame.draw.rect(surf, C["btn"], row_rect, border_radius=px(3))
+            col = npc["color"]
             pygame.draw.circle(surf, col, (x0 + px(8), y + px(8)), px(7))
             if sel:
                 pygame.draw.circle(surf, C["border_hi"], (x0 + px(8), y + px(8)), px(7), 2)
             label = npc["name"] + (f"  [P:{npc['pressure']}]" if npc["pressure"] > 0 else "")
             tc = C["text_hi"] if sel else C["text"]
             draw_text(surf, "panel_sm", label, tc, x0 + px(20), y + px(2))
+            clickables[f"npc:{npc['name']}"] = row_rect
             y += px(22)
     else:
         y = draw_text(surf, "panel_sm", "  Nobody here", C["text_dim"], x0, y)
@@ -824,10 +833,17 @@ def draw_panel(surf: pygame.Surface, gs: GameState,
     y += px(4)
     if ev_here:
         for item in ev_here:
+            row_rect = pygame.Rect(x0, y, w, px(18))
             sel = item == selected_ev
+            hovered = row_rect.collidepoint(pygame.mouse.get_pos())
+            if sel:
+                pygame.draw.rect(surf, C["btn_hi"], row_rect, border_radius=px(3))
+            elif hovered:
+                pygame.draw.rect(surf, C["btn"], row_rect, border_radius=px(3))
             col = C["text_hi"] if sel else C["gold"]
             prefix = "▸ " if sel else "  "
             draw_text(surf, "panel_sm", prefix + item.replace("_", " "), col, x0, y)
+            clickables[f"ev:{item}"] = row_rect
             y += px(18)
     else:
         y = draw_text(surf, "panel_sm", "  Nothing visible", C["text_dim"], x0, y)
@@ -846,7 +862,6 @@ def draw_panel(surf: pygame.Surface, gs: GameState,
     y += px(4)
 
     # Action buttons
-    btn_y = y
     for key, btn in buttons.items():
         btn.draw(surf)
 
@@ -1199,6 +1214,7 @@ class Game:
         # Persistent buttons in side panel
         self.panel_btns: dict[str, Button] = {}
         self._build_panel_buttons()
+        self.panel_clickables: dict[str, pygame.Rect] = {}  # populated each frame by draw_panel
 
         # Overlay states
         self.interrogate_state: dict = {}
@@ -1412,7 +1428,22 @@ class Game:
         elif self.panel_btns["notes"].is_clicked(event):
             self.overlay = Overlay.NOTES
 
-        # Map clicks: move to room or select NPC/evidence
+        # Panel NPC / evidence row clicks (select by clicking the list)
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and \
+                SIDE_RECT.collidepoint(event.pos):
+            for key, rect in self.panel_clickables.items():
+                if rect.collidepoint(event.pos):
+                    if key.startswith("npc:"):
+                        name = key[4:]
+                        self.selected_npc = "" if self.selected_npc == name else name
+                        self.selected_ev  = ""
+                    elif key.startswith("ev:"):
+                        item = key[3:]
+                        self.selected_ev  = "" if self.selected_ev == item else item
+                        self.selected_npc = ""
+                    break
+
+        # Map clicks: move to room or select NPC/evidence on map
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             pos = event.pos
             clicked_room = None
@@ -1577,7 +1608,7 @@ class Game:
 
         draw_hud(self.surf, self.gs)
         draw_map(self.surf, self.gs, self.hovered_room, self.selected_npc, self.selected_ev)
-        draw_panel(self.surf, self.gs, self.panel_btns, self.selected_npc, self.selected_ev, self.thinking)
+        draw_panel(self.surf, self.gs, self.panel_btns, self.selected_npc, self.selected_ev, self.thinking, self.panel_clickables)
         draw_log(self.surf, self.gs)
 
         # Overlays
