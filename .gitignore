@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Model files (large binaries)
+llm-server/model/*.gguf
+llm-server/model/*.bin
+llm-server/model/*.safetensors
+training/model-gguf/
+training/checkpoints/
+training/outputs/
+
+# Training data (can be regenerated)
+training/data/*.jsonl
+
+# Godot
+godot-game/.godot/
+godot-game/export/
+*.import
+*.translation
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
