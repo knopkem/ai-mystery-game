@@ -3,10 +3,6 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
-.env
-.venv/
-venv/
-env/
 *.egg-info/
 dist/
 build/
@@ -14,29 +10,32 @@ build/
 .mypy_cache/
 .ruff_cache/
 
-# Model files (large binaries)
-llm-server/model/*.gguf
-llm-server/model/*.bin
-llm-server/model/*.safetensors
-llm-server/model/mlx-model/
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Secrets — never commit these
+.env
+*.env.local
+
+# ── Model weights (large binaries, download separately) ──────────────────────
+# Base model + fine-tuned adapters
+llm-server/model/
 training/model-gguf/
+
+# Training outputs (checkpoints, intermediate saves)
 training/checkpoints/
-training/outputs/
+training/outputs*/
+training/steps-epoch*/
+training/runs/
 
-# Training data (can be regenerated)
-training/data/*.jsonl
-
-# Godot
-godot-game/.godot/
-godot-game/export/
-*.import
-*.translation
+# NOTE: training/data/ is intentionally tracked (JSONL training datasets)
 
 # macOS
 .DS_Store
 .AppleDouble
 .LSOverride
-Icon
 ._*
 .Spotlight-V100
 .Trashes
@@ -46,4 +45,3 @@ Icon
 .idea/
 *.swp
 *.swo
-pygame-game/.venv/
