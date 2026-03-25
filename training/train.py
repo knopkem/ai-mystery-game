@@ -9,7 +9,12 @@ but runs natively on MLX — no CUDA, no Triton required.
   mlx-tune (Apple Si):  from mlx_tune import FastLanguageModel   ← same API
 
 Usage:
-  python train.py [--model <model_id>] [--epochs 3] [--batch-size 2] [--output ./checkpoints]
+  python train.py [--model <model_id_or_path>] [--epochs 3] [--batch-size 2] [--output ./checkpoints]
+
+  If the model was already downloaded for the LLM server, pass the local path:
+    python train.py --model ../llm-server/model/mlx-model
+
+  Or let the script auto-detect it (default behaviour).
 
 Recommended models (all available pre-quantised on mlx-community):
 
@@ -37,6 +42,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -46,9 +52,25 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 DATA_DIR = Path(__file__).parent / "data"
 DEFAULT_OUTPUT = Path(__file__).parent / "checkpoints"
 
-# Default: Llama 3.1 8B — best balance of quality and speed on M-series Macs.
-# Override with --model (see docstring for alternatives).
-DEFAULT_MODEL = "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"
+# Local model path: the LLM server downloads the model here.
+# If it already exists we use it directly — no re-download needed.
+_LOCAL_MODEL_PATH = Path(__file__).parent.parent / "llm-server" / "model" / "mlx-model"
+
+# Default: use local path if already downloaded, otherwise pull from HF.
+DEFAULT_MODEL = (
+    str(_LOCAL_MODEL_PATH)
+    if (_LOCAL_MODEL_PATH / "config.json").exists()
+    else "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"
+)
+
+# Load HF_TOKEN from llm-server/.env if not already in the environment
+_env_file = Path(__file__).parent.parent / "llm-server" / ".env"
+if "HF_TOKEN" not in os.environ and _env_file.exists():
+    for _line in _env_file.read_text().splitlines():
+        if _line.startswith("HF_TOKEN="):
+            os.environ["HF_TOKEN"] = _line.split("=", 1)[1].strip().strip('"').strip("'")
+            log.info("HF_TOKEN loaded from llm-server/.env")
+            break
 
 # Batch size recommendation per model size:
 #   8B → batch 2, grad_accum 2  (effective 4)
@@ -249,8 +271,11 @@ def main():
         "--model",
         default=DEFAULT_MODEL,
         help=(
-            "mlx-community model ID to fine-tune. Options:\n"
-            "  mlx-community/Meta-Llama-3.1-8B-Instruct-4bit  (default, recommended)\n"
+            "Local path or mlx-community model ID to fine-tune.\n"
+            "Auto-detected default: uses ../llm-server/model/mlx-model if it\n"
+            "already exists (no re-download), otherwise pulls from HuggingFace.\n"
+            "HF alternatives:\n"
+            "  mlx-community/Meta-Llama-3.1-8B-Instruct-4bit  (recommended)\n"
             "  mlx-community/Mistral-7B-Instruct-v0.3-4bit\n"
             "  mlx-community/Phi-3.5-mini-instruct-4bit\n"
             "  mlx-community/Qwen2.5-3B-Instruct-4bit"
