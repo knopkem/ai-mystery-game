@@ -98,8 +98,8 @@ class Game:
         # Title screen buttons
         self.btn_start    = Button(pygame.Rect(0, 0, px(240), px(52)), "New Investigation")
         self.btn_how      = Button(pygame.Rect(0, 0, px(160), px(36)), "How to Play")
-        self.btn_check    = Button(pygame.Rect(0, 0, px(160), px(36)), "Check Server")
         self.btn_tut_back = Button(pygame.Rect(0, 0, px(160), px(40)), "← Back to Menu")
+        self._next_health_check: int = 0  # pygame ticks timestamp for next poll
 
         # Game-over buttons
         self.go_state: dict = {}
@@ -151,6 +151,7 @@ class Game:
             self.tick += 1
 
             self._poll_llm_results()
+            self._poll_server_health()
 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -160,6 +161,15 @@ class Game:
 
             self._draw(dt)
             pygame.display.flip()
+
+    def _poll_server_health(self) -> None:
+        """Auto-check the LLM server every second while on the title screen."""
+        if self.screen != Screen.TITLE:
+            return
+        now = pygame.time.get_ticks()
+        if now >= self._next_health_check:
+            self._next_health_check = now + 1000
+            threading.Thread(target=self._do_health_check, daemon=True).start()
 
     # ── LLM result polling ──────────────────────────────────────────────
 
@@ -269,9 +279,6 @@ class Game:
             self._start_new_game()
         if self.btn_how.is_clicked(event):
             self.screen = Screen.TUTORIAL
-        if self.btn_check.is_clicked(event):
-            self.server_ok = None
-            threading.Thread(target=self._do_health_check, daemon=True).start()
 
     def _do_health_check(self) -> None:
         result = self.client.check_health()
@@ -476,7 +483,7 @@ class Game:
         self.surf.fill(C["bg"])
 
         if self.screen == Screen.TITLE:
-            draw_title_screen(self.surf, self.server_ok, self.btn_start, self.btn_how, self.btn_check)
+            draw_title_screen(self.surf, self.server_ok, self.btn_start, self.btn_how)
             return
 
         if self.screen == Screen.TUTORIAL:

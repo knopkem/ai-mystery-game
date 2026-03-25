@@ -12,7 +12,7 @@ from ui.widgets import Button, draw_text, draw_overlay_bg
 # ═══════════════════════════════════════════════════════════════════════════
 
 def draw_title_screen(surf: pygame.Surface, server_ok: bool | None,
-                      btn_start: Button, btn_how: Button, btn_check: Button) -> None:
+                      btn_start: Button, btn_how: Button) -> None:
     surf.fill(C["bg"])
 
     cx = _t.WIN_W // 2
@@ -37,10 +37,8 @@ def draw_title_screen(surf: pygame.Surface, server_ok: bool | None,
 
     btn_start.rect = pygame.Rect(cx - px(120), px(356), px(240), px(52))
     btn_how.rect   = pygame.Rect(cx - px(80),  px(424), px(160), px(36))
-    btn_check.rect = pygame.Rect(cx - px(80),  px(474), px(160), px(36))
     btn_start.draw(surf)
     btn_how.draw(surf)
-    btn_check.draw(surf)
 
     instructions = [
         "Click rooms on the map to move  •  Click evidence to examine  •  Click NPCs to select them",
