@@ -357,6 +357,148 @@ class Phase(Enum):
     EVENT  = auto()
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# RULE-BASED INTERROGATION FALLBACK
+# Used when LLM server is offline. Varies by personality, pressure,
+# killer status, question keywords, and evidence shown.
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _fallback_interrogate(npc: dict, question: str, evidence_shown: list[str]) -> dict:
+    name        = npc.get("name", "Suspect")
+    personality = npc.get("personality", "cold")
+    is_killer   = npc.get("is_killer", False) or npc.get("identity", {}).get("is_killer", False)
+    pressure    = npc.get("pressure", 0)
+    alibi       = npc.get("alibi", "was elsewhere that evening")
+    false_alibi = npc.get("false_alibi", "")
+    relationship= npc.get("relationship", "associate")
+    q           = question.lower()
+
+    lie = False
+
+    # ── Emotion ─────────────────────────────────────────────────────────
+    if is_killer:
+        if pressure >= 7:   emotion = random.choice(["nervous", "angry", "defensive"])
+        elif pressure >= 4: emotion = random.choice(["calm", "defensive"])
+        else:               emotion = "calm"
+    else:
+        base = {"nervous": "nervous", "arrogant": "calm",
+                "charming": "calm", "cold": "calm", "paranoid": "nervous"}
+        emotion = base.get(personality, "calm")
+        if pressure >= 7:   emotion = random.choice(["tearful", "nervous", "angry"])
+        elif pressure >= 4: emotion = random.choice(["nervous", "defensive"])
+
+    dialogue = ""
+
+    # ── Evidence reaction ────────────────────────────────────────────────
+    if evidence_shown:
+        ev = evidence_shown[-1].replace("_", " ")
+        if is_killer:
+            lie = True
+            if pressure >= 6:
+                dialogue = f"I... I don't know how that {ev} got there. You're trying to trap me."
+            else:
+                dialogue = f"That {ev}? I've never seen it before in my life. Someone must have planted it."
+        else:
+            other_room = random.choice([r for r in ROOMS])
+            dialogue = f"That {ev}? I noticed it near the {other_room} earlier but thought nothing of it."
+
+    # ── Alibi / whereabouts ──────────────────────────────────────────────
+    elif any(w in q for w in ["where", "alibi", "doing", "were you", "location", "night", "evening", "time"]):
+        if is_killer:
+            lie = True
+            fa = false_alibi or f"was in the {random.choice(ROOMS)} all evening"
+            dialogue = f"I {fa}. I had no reason to be anywhere near the scene."
+        else:
+            dialogue = f"I {alibi}. I can assure you I had nothing to do with this tragedy."
+
+    # ── Motive / relationship ────────────────────────────────────────────
+    elif any(w in q for w in ["motive", "reason", "why", "hate", "gain", "benefit", "inherit", "money"]):
+        if is_killer:
+            lie = True
+            dialogue = f"Motive? I had none. Lord Ashworth and I had our difficulties, but nothing like this."
+        else:
+            dialogue = f"As his {relationship}, I had everything to lose from his death. This is absurd."
+
+    # ── Secrets / suspicious behaviour ──────────────────────────────────
+    elif any(w in q for w in ["secret", "hiding", "lie", "truth", "nervous", "know", "seen", "witness", "saw"]):
+        if is_killer:
+            if pressure >= 7:
+                lie = False
+                dialogue = f"You're more observant than I gave you credit for. But knowing and proving are very different things."
+            else:
+                lie = True
+                dialogue = f"I don't know what you've been told, but whoever said that is lying to protect themselves."
+        else:
+            if personality == "nervous":
+                room = random.choice(ROOMS)
+                other = random.choice([s["name"] for s in SUSPECT_BLUEPRINTS if s["name"] != name])
+                dialogue = f"There is... one thing. I saw {other} coming out of the {room} very late. I didn't mention it because I didn't want trouble."
+            elif personality == "paranoid":
+                dialogue = "Someone in this house is framing me. I can feel it. You should be looking at the others."
+            else:
+                dialogue = "I've been completely honest with you. There is nothing more to tell."
+
+    # ── Direct accusation ────────────────────────────────────────────────
+    elif any(w in q for w in ["did you", "guilty", "kill", "murder", "confess", "you did it", "responsible"]):
+        if is_killer:
+            if pressure >= 8:
+                lie = False
+                emotion = "angry"
+                dialogue = "You can't prove a thing without solid evidence. I want a solicitor."
+            else:
+                lie = True
+                emotion = "angry"
+                dialogue = f"How dare you! I am deeply offended. I demand you look at someone else."
+        else:
+            emotion = "angry"
+            dialogue = f"Absolutely not! I am Lord Ashworth's {relationship} — why on earth would I harm him?"
+
+    # ── Questions about other suspects ───────────────────────────────────
+    else:
+        mentioned = [s["name"] for s in SUSPECT_BLUEPRINTS
+                     if s["name"].lower() in q and s["name"] != name]
+        if mentioned:
+            other = mentioned[0]
+            if is_killer:
+                lie = True
+                dialogue = f"Since you ask — {other} was acting very strangely the night of the murder. I didn't want to say, but..."
+            elif personality == "paranoid":
+                dialogue = f"I never trusted {other}. Always lurking, always watching. You should look closely at them."
+            elif personality == "charming":
+                dialogue = f"I like {other} very much, but I did notice they seemed distracted that evening."
+            else:
+                dialogue = f"I really can't speak for {other}. You'd have to ask them yourself."
+
+    # ── Personality-based default ────────────────────────────────────────
+    if not dialogue:
+        defaults = {
+            "nervous":  [
+                "I've told you everything I know. Please, this is very distressing.",
+                "My mind is a blur. I keep replaying that morning over and over.",
+            ],
+            "arrogant": [
+                "I've already given my statement. Is there a point to these repetitive questions?",
+                "I find this line of inquiry rather beneath both of us.",
+            ],
+            "charming": [
+                "I truly wish I could help more. I'm as desperate to find the truth as you are.",
+                "You're very thorough, detective. I only wish I had more to offer.",
+            ],
+            "cold": [
+                "I have said everything relevant. Move on.",
+                "That question has been asked. The answer has not changed.",
+            ],
+            "paranoid": [
+                "Are you sure no one else is listening? Something feels very wrong in this house.",
+                "Someone here wants me blamed for this. I can sense it.",
+            ],
+        }
+        options = defaults.get(personality, ["I have nothing more to add."])
+        dialogue = random.choice(options)
+
+    return {"dialogue": dialogue, "lie": lie, "emotion": emotion, "internal_thought": "(offline fallback)"}
+
+
 class GameState:
     def __init__(self) -> None:
         self.reset()
@@ -1324,9 +1466,14 @@ class Game:
                 self.interrogate_state["response"] = data
                 self.interrogate_state["waiting"]  = False
             else:
-                fallback = {"dialogue": "I… I have nothing to say.",
-                            "lie": False, "emotion": "nervous", "internal_thought": ""}
-                self.gs.record_interrogation(self.interrogate_state.get("npc_name",""), fallback)
+                npc_name = self.interrogate_state.get("npc_name", "")
+                question = self.interrogate_state.get("input", TextInput(pygame.Rect(0,0,0,0))).text
+                fallback = _fallback_interrogate(
+                    self.gs.npc_dict(npc_name) if npc_name in self.gs.npcs else {},
+                    question,
+                    self.gs.found_evidence,
+                )
+                self.gs.record_interrogation(npc_name, fallback)
                 self.interrogate_state["response"] = fallback
                 self.interrogate_state["waiting"]  = False
 
