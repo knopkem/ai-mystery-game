@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import time
 from pathlib import Path
 
 log = logging.getLogger("train")
@@ -53,7 +54,8 @@ DEFAULT_MODEL = "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"
 #   8B → batch 2, grad_accum 2  (effective 4)
 #   7B → batch 2, grad_accum 2
 #   3-4B → batch 4, grad_accum 1
-DEFAULT_BATCH = 2
+DEFAULT_BATCH = 1   # 1 is safest on MacBook Air (passive cooling, 16 GB)
+                    # bump to 2 on MacBook Pro / Mac Studio
 
 ALPACA_TEMPLATE = """\
 Below is an instruction that describes a task, paired with an input that provides further context. \
@@ -105,9 +107,9 @@ def format_example(example: dict) -> str:
 # Training
 # ---------------------------------------------------------------------------
 
-def train(epochs: int, batch_size: int, output_dir: Path, max_seq_length: int, model_name: str):
+def train(epochs: int, batch_size: int, output_dir: Path,
+          max_seq_length: int, model_name: str, cooldown_secs: int):
     try:
-        # mlx-tune mirrors the Unsloth API — just change the import source
         from mlx_tune import FastLanguageModel, SFTTrainer, SFTConfig  # type: ignore
         from datasets import Dataset  # type: ignore
     except ImportError as e:
@@ -118,7 +120,6 @@ def train(epochs: int, batch_size: int, output_dir: Path, max_seq_length: int, m
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # --- Load base model from mlx-community (pre-quantized for Apple Silicon) ---
     log.info("Loading base model: %s", model_name)
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=model_name,
@@ -126,7 +127,7 @@ def train(epochs: int, batch_size: int, output_dir: Path, max_seq_length: int, m
         load_in_4bit=True,
     )
 
-    # --- Apply LoRA (identical API to Unsloth) ---
+    # LoRA r=16: good quality, low thermal load (avoid r=64+ on Air)
     model = FastLanguageModel.get_peft_model(
         model,
         r=16,
@@ -141,54 +142,79 @@ def train(epochs: int, batch_size: int, output_dir: Path, max_seq_length: int, m
     )
     log.info("LoRA applied. Trainable parameters: %s", _count_params(model))
 
-    # --- Build dataset ---
     raw = load_all_data()
     if not raw:
-        raise SystemExit(
-            "No training data found in data/. "
-            "Run generate_data.py first."
-        )
+        raise SystemExit("No training data found in data/. Run generate_data.py first.")
     log.info("Total training examples: %d", len(raw))
-
     dataset = Dataset.from_dict({"text": [format_example(ex) for ex in raw]})
 
-    # --- Train (SFTTrainer API identical to Unsloth/TRL) ---
-    trainer = SFTTrainer(
-        model=model,
-        tokenizer=tokenizer,
-        train_dataset=dataset,
-        args=SFTConfig(
-            dataset_text_field="text",
-            max_seq_length=max_seq_length,
-            per_device_train_batch_size=batch_size,
-            gradient_accumulation_steps=max(1, 4 // batch_size),
-            num_train_epochs=epochs,
-            learning_rate=2e-4,
-            logging_steps=10,
-            save_strategy="epoch",
-            output_dir=str(output_dir),
-            warmup_ratio=0.05,
-            lr_scheduler_type="cosine",
-            seed=42,
-        ),
-    )
+    # Effective batch = batch_size × grad_accum_steps
+    # With batch=1, grad_accum=4 → effective batch of 4 (same quality, less RAM burst)
+    grad_accum = max(1, 4 // batch_size)
 
-    log.info("Starting training (%d epochs, batch size %d) on Apple Silicon MLX...", epochs, batch_size)
-    trainer.train()
+    # ── Epoch loop with optional cool-down ───────────────────────────────
+    # We train 1 epoch at a time so we can insert a thermal cool-down pause
+    # between epochs. On a MacBook Air this prevents sustained throttling
+    # and gives consistent tokens/sec throughout the run.
+    log.info(
+        "Training: %d epochs × 1, batch=%d, grad_accum=%d (effective batch %d)",
+        epochs, batch_size, grad_accum, batch_size * grad_accum,
+    )
+    if cooldown_secs > 0:
+        log.info("Cool-down between epochs: %d s  (disable with --cooldown 0)", cooldown_secs)
+
+    for epoch in range(1, epochs + 1):
+        log.info("─── Epoch %d / %d ───", epoch, epochs)
+        trainer = SFTTrainer(
+            model=model,
+            tokenizer=tokenizer,
+            train_dataset=dataset,
+            args=SFTConfig(
+                dataset_text_field="text",
+                max_seq_length=max_seq_length,
+                per_device_train_batch_size=batch_size,
+                gradient_accumulation_steps=grad_accum,
+                num_train_epochs=1,          # one epoch per trainer call
+                learning_rate=2e-4,
+                logging_steps=20,
+                save_strategy="no",          # we save manually below
+                eval_strategy="no",          # no eval — reduces heat spikes
+                output_dir=str(output_dir),
+                warmup_ratio=0.05 if epoch == 1 else 0.0,   # warmup first epoch only
+                lr_scheduler_type="cosine",
+                seed=42 + epoch,
+            ),
+        )
+        trainer.train()
+
+        # Save checkpoint after every epoch so a crash / forced stop loses nothing
+        ckpt = output_dir / f"checkpoint-epoch{epoch}"
+        model.save_pretrained(str(ckpt))
+        tokenizer.save_pretrained(str(ckpt))
+        log.info("Checkpoint saved → %s", ckpt)
+
+        if epoch < epochs and cooldown_secs > 0:
+            log.info(
+                "Cooling down for %d s before next epoch "
+                "(tip: keep lid open, place on a cold hard surface)…",
+                cooldown_secs,
+            )
+            time.sleep(cooldown_secs)
+
     log.info("Training complete.")
 
-    # --- Save in MLX format (primary — used by mlx-lm inference server) ---
+    # Final save in MLX format for the inference server
     mlx_path = output_dir / "mlx-model"
     model.save_pretrained(str(mlx_path))
     tokenizer.save_pretrained(str(mlx_path))
-    log.info("MLX model saved to %s", mlx_path)
+    log.info("MLX model saved → %s", mlx_path)
     log.info("Copy to server:  cp -r %s ../llm-server/model/mlx-model", mlx_path)
-    log.info("Then start server: cd ../llm-server && uvicorn server:app --host 127.0.0.1 --port 8000")
+    log.info("Start server:    cd ../llm-server && uvicorn server:app --host 127.0.0.1 --port 8000")
 
-    # --- Also save merged model for optional GGUF export ---
+    # Merged 16-bit for optional GGUF export
     merged_path = output_dir / "merged"
     model.save_pretrained_merged(str(merged_path), tokenizer, save_method="merged_16bit")
-    log.info("Merged (16-bit) model saved to %s (use export_gguf.py if GGUF needed)", merged_path)
+    log.info("Merged model → %s  (use export_gguf.py if GGUF needed)", merged_path)
 
 
 # ---------------------------------------------------------------------------
@@ -228,8 +254,19 @@ def main():
     parser.add_argument("--batch-size",      type=int,  default=DEFAULT_BATCH)
     parser.add_argument("--output",          type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--max-seq-length",  type=int,  default=2048)
+    parser.add_argument(
+        "--cooldown",
+        type=int, default=300,
+        metavar="SECS",
+        help=(
+            "Seconds to pause between epochs for the chip to cool down. "
+            "Default: 300 (5 min) — recommended for MacBook Air. "
+            "Set to 0 to disable (MacBook Pro / Mac Studio)."
+        ),
+    )
     args = parser.parse_args()
-    train(args.epochs, args.batch_size, args.output, args.max_seq_length, args.model)
+    train(args.epochs, args.batch_size, args.output, args.max_seq_length,
+          args.model, args.cooldown)
 
 
 if __name__ == "__main__":
