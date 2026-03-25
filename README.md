@@ -107,7 +107,7 @@ The title screen shows **✓ LLM server online**. NPC behaviour and interrogatio
 
 ### Option C — Fine-tune on your game data (best results)
 
-#### 1. Generate training data (~2700 examples via Claude)
+#### 1. Generate training data (~2700 examples via Claude) - can be skipped (already included)
 
 ```bash
 cd training
