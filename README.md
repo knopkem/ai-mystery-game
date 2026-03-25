@@ -12,9 +12,9 @@ The player is a detective investigating a murder in a Victorian mansion. 5 suspe
 |-----------|-----------|
 | Game Engine | Godot 4.x (GDScript) |
 | LLM Server | Python + FastAPI |
-| Base Model | Qwen2.5-3B |
-| Fine-tuning | Unsloth + LoRA |
-| Inference | llama-cpp-python (GGUF Q4_K_M) |
+| Base Model | Qwen2.5-3B (mlx-community 4-bit) |
+| Fine-tuning | mlx-tune (Unsloth-compatible, Apple Silicon native) |
+| Inference | mlx-lm (MLX native) / llama-cpp-python (GGUF fallback) |
 | Communication | HTTP REST (localhost:8000) |
 
 **Target hardware**: MacBook M4, 16GB RAM (~2-3GB model, ~1-2GB Godot)
@@ -24,16 +24,17 @@ The player is a detective investigating a murder in a Victorian mansion. 5 suspe
 ```
 ai-game/
 ├── llm-server/          # Python FastAPI inference server
-│   ├── server.py        # API endpoints
+│   ├── server.py        # API endpoints (mlx-lm or llama-cpp backend)
 │   ├── prompts.py       # Prompt templates
 │   ├── schemas.py       # Pydantic request/response models
 │   ├── fallback.py      # Rule-based NPC fallbacks
-│   └── model/           # GGUF model files (gitignored)
-├── training/            # Unsloth fine-tuning pipeline
+│   ├── .env.example     # Config template (BACKEND, model paths)
+│   └── model/           # Model files (gitignored)
+├── training/            # mlx-tune fine-tuning pipeline (Apple Silicon)
 │   ├── generate_data.py # Synthetic data generation via cloud LLM
-│   ├── train.py         # Unsloth fine-tuning script
-│   ├── export_gguf.py   # Export trained model to GGUF
-│   ├── evaluate.py      # Quality evaluation of model outputs
+│   ├── train.py         # mlx-tune SFT with LoRA — no CUDA required
+│   ├── export_gguf.py   # Optional GGUF export for cross-platform deploy
+│   ├── evaluate.py      # Quality evaluation (mlx or llamacpp backend)
 │   └── data/            # JSONL training data
 ├── godot-game/          # Godot 4.x game project
 │   ├── scenes/          # Game scenes (rooms, UI, NPCs)
@@ -52,16 +53,27 @@ cd llm-server
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env     # default: BACKEND=mlx
 ```
 
-**First time**: Run the training pipeline to produce the GGUF model:
+**First time — run the training pipeline** to produce the fine-tuned model:
 ```bash
 cd ../training
-python generate_data.py   # Generate synthetic training data
-python train.py           # Fine-tune with Unsloth (requires GPU or Apple Silicon)
-python export_gguf.py     # Export to GGUF Q4_K_M
-cp model-gguf/*.gguf ../llm-server/model/
+pip install -r requirements-train.txt   # installs mlx-tune, mlx, mlx-lm
+
+OPENAI_API_KEY=sk-... python generate_data.py   # generate ~2700 synthetic examples
+python train.py                                  # fine-tune on Apple Silicon (no CUDA needed)
+# Saves model to: checkpoints/mlx-model/
+
+cp -r checkpoints/mlx-model ../llm-server/model/mlx-model
 ```
+
+> **Why mlx-tune instead of Unsloth?**
+> Unsloth requires Triton which is CUDA-only and unavailable on macOS.
+> [`mlx-tune`](https://github.com/ARahim3/mlx-tune) is a community-built drop-in replacement
+> with an identical API (`FastLanguageModel`, `SFTTrainer`) that runs natively on Apple Silicon.
+> Inference uses [`mlx-lm`](https://github.com/ml-explore/mlx-lm) — also native MLX, no llama.cpp needed.
+> GGUF export via `export_gguf.py` is available if you ever want to deploy cross-platform.
 
 **Start the server**:
 ```bash

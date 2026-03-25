@@ -1,10 +1,15 @@
 """
-Export the fine-tuned merged model to GGUF format for local inference with llama.cpp.
+Export the fine-tuned merged model to GGUF format for llama.cpp (cross-platform).
+
+NOTE: On Apple Silicon the MLX-format model in checkpoints/mlx-model is preferred
+for inference (use it directly with mlx-lm). GGUF export is optional and only needed
+if you want to deploy to a non-Apple machine or test with other llama.cpp tools.
 
 Usage:
   python export_gguf.py [--merged ./checkpoints/merged] [--output ./model-gguf] [--quant q4_k_m]
 
-The resulting .gguf file should be copied to ../llm-server/model/
+The resulting .gguf file can be copied to ../llm-server/model/ and used with
+the llama-cpp-python backend (see llm-server/.env: BACKEND=llamacpp).
 """
 from __future__ import annotations
 
@@ -23,11 +28,13 @@ def export(merged_dir: Path, output_dir: Path, quant: str):
 
     if not merged_dir.exists():
         raise SystemExit(
-            f"Merged model not found at {merged_dir}. Run train.py first."
+            f"Merged model not found at {merged_dir}. Run train.py first.\n"
+            "The merged model is saved to checkpoints/merged/ by train.py."
         )
 
     try:
-        from unsloth import FastLanguageModel  # type: ignore
+        # mlx-tune uses identical save_pretrained_gguf API to Unsloth
+        from mlx_tune import FastLanguageModel  # type: ignore
     except ImportError as e:
         raise SystemExit(
             f"Missing dependency: {e}\nRun: pip install -r requirements-train.txt"
@@ -37,24 +44,26 @@ def export(merged_dir: Path, output_dir: Path, quant: str):
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=str(merged_dir),
         max_seq_length=2048,
-        dtype=None,
         load_in_4bit=False,  # load full precision for export
     )
 
-    gguf_path = output_dir / f"murder-mystery-{quant}.gguf"
-    log.info("Exporting to GGUF (%s) → %s ...", quant, gguf_path)
-
+    log.info("Exporting to GGUF (%s) → %s ...", quant, output_dir)
     model.save_pretrained_gguf(
         str(output_dir / "murder-mystery"),
         tokenizer,
         quantization_method=quant,
     )
 
-    log.info("Export complete.")
+    gguf_file = output_dir / f"murder-mystery-{quant}.gguf"
+    log.info("GGUF export complete: %s", gguf_file)
     log.info("")
-    log.info("Next step: copy the GGUF file to the LLM server:")
-    log.info("  cp %s/*.gguf ../llm-server/model/murder-mystery.gguf", output_dir)
-    log.info("Then update MODEL_PATH in your .env if needed.")
+    log.info("To use with the llama-cpp backend:")
+    log.info("  cp %s ../llm-server/model/murder-mystery.gguf", gguf_file)
+    log.info("  # Set in llm-server/.env:  BACKEND=llamacpp")
+    log.info("")
+    log.info("For Apple Silicon (recommended), use the MLX model instead:")
+    log.info("  cp -r checkpoints/mlx-model ../llm-server/model/mlx-model")
+    log.info("  # Set in llm-server/.env:  BACKEND=mlx  (default)")
 
 
 def main():

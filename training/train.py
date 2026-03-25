@@ -1,16 +1,25 @@
 """
-Fine-tune Qwen2.5-3B with Unsloth + LoRA (SFTTrainer).
+Fine-tune Qwen2.5-3B with mlx-tune (Apple Silicon MLX) + LoRA.
+
+mlx-tune is a community-built Unsloth-compatible fine-tuning library for
+Apple Silicon. It uses the same FastLanguageModel / SFTTrainer API as Unsloth
+but runs natively on MLX — no CUDA, no Triton required.
+
+  Unsloth (CUDA):       from unsloth import FastLanguageModel
+  mlx-tune (Apple Si):  from mlx_tune import FastLanguageModel   ← same API
 
 Usage:
   python train.py [--epochs 3] [--batch-size 2] [--output ./checkpoints]
 
 Requirements:
-  pip install -r requirements-train.txt
+  pip install -r requirements-train.txt   # installs mlx-tune, mlx, mlx-lm
 
 Notes:
 - Trains on all JSONL files in data/
 - Uses Alpaca-format: instruction / input / output fields
 - Saves LoRA adapter + merged model to ./checkpoints/
+- Model is saved in MLX format for use with mlx-lm inference server
+- Optionally export to GGUF with export_gguf.py for llama.cpp cross-platform use
 """
 from __future__ import annotations
 
@@ -24,7 +33,9 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 
 DATA_DIR = Path(__file__).parent / "data"
 DEFAULT_OUTPUT = Path(__file__).parent / "checkpoints"
-BASE_MODEL = "unsloth/Qwen2.5-3B-Instruct-bnb-4bit"
+
+# mlx-community hosts MLX-quantized models — use 4-bit for 16GB RAM
+BASE_MODEL = "mlx-community/Qwen2.5-3B-Instruct-4bit"
 
 ALPACA_TEMPLATE = """\
 Below is an instruction that describes a task, paired with an input that provides further context. \
@@ -78,9 +89,9 @@ def format_example(example: dict) -> str:
 
 def train(epochs: int, batch_size: int, output_dir: Path, max_seq_length: int):
     try:
-        from unsloth import FastLanguageModel  # type: ignore
+        # mlx-tune mirrors the Unsloth API — just change the import source
+        from mlx_tune import FastLanguageModel, SFTTrainer, SFTConfig  # type: ignore
         from datasets import Dataset  # type: ignore
-        from trl import SFTTrainer, SFTConfig  # type: ignore
     except ImportError as e:
         raise SystemExit(
             f"Missing dependency: {e}\n"
@@ -89,16 +100,15 @@ def train(epochs: int, batch_size: int, output_dir: Path, max_seq_length: int):
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # --- Load base model ---
+    # --- Load base model from mlx-community (pre-quantized for Apple Silicon) ---
     log.info("Loading base model: %s", BASE_MODEL)
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=BASE_MODEL,
         max_seq_length=max_seq_length,
-        dtype=None,         # auto-detect (bfloat16 on Apple Silicon)
         load_in_4bit=True,
     )
 
-    # --- Apply LoRA ---
+    # --- Apply LoRA (identical API to Unsloth) ---
     model = FastLanguageModel.get_peft_model(
         model,
         r=16,
@@ -109,7 +119,6 @@ def train(epochs: int, batch_size: int, output_dir: Path, max_seq_length: int):
         lora_alpha=16,
         lora_dropout=0,
         bias="none",
-        use_gradient_checkpointing="unsloth",
         random_state=42,
     )
     log.info("LoRA applied. Trainable parameters: %s", _count_params(model))
@@ -125,7 +134,7 @@ def train(epochs: int, batch_size: int, output_dir: Path, max_seq_length: int):
 
     dataset = Dataset.from_dict({"text": [format_example(ex) for ex in raw]})
 
-    # --- Train ---
+    # --- Train (SFTTrainer API identical to Unsloth/TRL) ---
     trainer = SFTTrainer(
         model=model,
         tokenizer=tokenizer,
@@ -137,8 +146,6 @@ def train(epochs: int, batch_size: int, output_dir: Path, max_seq_length: int):
             gradient_accumulation_steps=max(1, 4 // batch_size),
             num_train_epochs=epochs,
             learning_rate=2e-4,
-            fp16=False,
-            bf16=True,
             logging_steps=10,
             save_strategy="epoch",
             output_dir=str(output_dir),
@@ -148,20 +155,21 @@ def train(epochs: int, batch_size: int, output_dir: Path, max_seq_length: int):
         ),
     )
 
-    log.info("Starting training (%d epochs, batch size %d)...", epochs, batch_size)
+    log.info("Starting training (%d epochs, batch size %d) on Apple Silicon MLX...", epochs, batch_size)
     trainer.train()
     log.info("Training complete.")
 
-    # --- Save LoRA adapter ---
-    adapter_path = output_dir / "lora-adapter"
-    model.save_pretrained(str(adapter_path))
-    tokenizer.save_pretrained(str(adapter_path))
-    log.info("LoRA adapter saved to %s", adapter_path)
+    # --- Save in MLX format (primary — used by mlx-lm inference server) ---
+    mlx_path = output_dir / "mlx-model"
+    model.save_pretrained(str(mlx_path))
+    tokenizer.save_pretrained(str(mlx_path))
+    log.info("MLX model saved to %s", mlx_path)
+    log.info("Copy to server: cp -r %s ../llm-server/model/mlx-model", mlx_path)
 
-    # --- Save merged model (for GGUF export) ---
+    # --- Also save merged model for optional GGUF export ---
     merged_path = output_dir / "merged"
     model.save_pretrained_merged(str(merged_path), tokenizer, save_method="merged_16bit")
-    log.info("Merged model saved to %s", merged_path)
+    log.info("Merged (16-bit) model saved to %s (use export_gguf.py if GGUF needed)", merged_path)
 
 
 # ---------------------------------------------------------------------------

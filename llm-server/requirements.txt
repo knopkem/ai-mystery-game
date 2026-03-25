@@ -1,5 +1,11 @@
 fastapi>=0.115
 uvicorn[standard]>=0.30
 pydantic>=2.0
-llama-cpp-python>=0.3
 python-dotenv>=1.0
+
+# Primary inference backend — Apple Silicon MLX (native, best performance on M-series)
+mlx-lm>=0.20
+
+# Optional fallback — cross-platform GGUF inference via llama.cpp
+# Uncomment if deploying on non-Apple hardware or using GGUF models:
+# llama-cpp-python>=0.3

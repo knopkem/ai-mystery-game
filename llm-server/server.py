@@ -7,6 +7,10 @@ POST /setup-mystery    — Generate a new mystery (killer, evidence, alibis)
 POST /npc-actions      — Batch NPC decisions for a game turn
 POST /interrogate      — Single NPC interrogation response
 GET  /health           — Liveness check (reports model load status)
+
+Inference backends (set via .env or environment variable BACKEND):
+  mlx       (default) — Apple Silicon native via mlx-lm; uses MLX-format model at MLX_MODEL_PATH
+  llamacpp             — Cross-platform via llama-cpp-python; uses GGUF at MODEL_PATH
 """
 from __future__ import annotations
 
@@ -43,46 +47,86 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(name)s | %(mes
 log = logging.getLogger("murder-mystery")
 
 # ---------------------------------------------------------------------------
-# Model loading
+# Config
 # ---------------------------------------------------------------------------
 
+BACKEND = os.getenv("BACKEND", "mlx").lower()  # "mlx" (default) or "llamacpp"
+
+# MLX backend (Apple Silicon — recommended)
+MLX_MODEL_PATH = os.getenv("MLX_MODEL_PATH", "model/mlx-model")
+
+# llama-cpp backend (cross-platform GGUF fallback)
 MODEL_PATH = Path(os.getenv("MODEL_PATH", "model/murder-mystery.gguf"))
 N_CTX = int(os.getenv("N_CTX", "4096"))
 N_GPU_LAYERS = int(os.getenv("N_GPU_LAYERS", "-1"))  # -1 = all layers on Metal
+
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "512"))
 MAX_RETRIES = 3
 
-_llm = None  # llama_cpp.Llama instance, loaded on startup
+_llm = None          # llama_cpp.Llama instance (llamacpp backend)
+_mlx_model = None    # mlx-lm model (mlx backend)
+_mlx_tokenizer = None
 
 
-def _load_model() -> object | None:
+# ---------------------------------------------------------------------------
+# Model loading
+# ---------------------------------------------------------------------------
+
+def _load_model_mlx() -> tuple[object, object] | tuple[None, None]:
+    """Load MLX-format model via mlx-lm (Apple Silicon native)."""
+    try:
+        import mlx_lm  # type: ignore
+        from pathlib import Path as _Path
+        if not _Path(MLX_MODEL_PATH).exists():
+            log.warning(
+                "MLX model not found at %s. Server will use fallback logic only.", MLX_MODEL_PATH
+            )
+            return None, None
+        log.info("Loading MLX model from %s ...", MLX_MODEL_PATH)
+        model, tokenizer = mlx_lm.load(MLX_MODEL_PATH)
+        log.info("MLX model loaded successfully.")
+        return model, tokenizer
+    except Exception as exc:
+        log.error("Failed to load MLX model: %s", exc)
+        return None, None
+
+
+def _load_model_llamacpp() -> object | None:
+    """Load GGUF model via llama-cpp-python (cross-platform fallback)."""
     try:
         from llama_cpp import Llama  # type: ignore
         if not MODEL_PATH.exists():
             log.warning(
-                "Model file not found at %s. Server will use fallback logic only.", MODEL_PATH
+                "GGUF model not found at %s. Server will use fallback logic only.", MODEL_PATH
             )
             return None
-        log.info("Loading model from %s ...", MODEL_PATH)
+        log.info("Loading GGUF model from %s ...", MODEL_PATH)
         llm = Llama(
             model_path=str(MODEL_PATH),
             n_ctx=N_CTX,
             n_gpu_layers=N_GPU_LAYERS,
             verbose=False,
         )
-        log.info("Model loaded successfully.")
+        log.info("GGUF model loaded successfully.")
         return llm
     except Exception as exc:
-        log.error("Failed to load model: %s", exc)
+        log.error("Failed to load GGUF model: %s", exc)
         return None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _llm
-    _llm = _load_model()
+    global _llm, _mlx_model, _mlx_tokenizer
+    if BACKEND == "mlx":
+        log.info("Backend: mlx-lm (Apple Silicon MLX)")
+        _mlx_model, _mlx_tokenizer = _load_model_mlx()
+    else:
+        log.info("Backend: llama-cpp-python (GGUF)")
+        _llm = _load_model_llamacpp()
     yield
     _llm = None
+    _mlx_model = None
+    _mlx_tokenizer = None
 
 
 app = FastAPI(
@@ -98,7 +142,35 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 
 def _call_llm(system: str, user: str) -> str | None:
-    """Call the model; return raw text or None on failure."""
+    """Call the active backend; return raw text or None on failure."""
+    if BACKEND == "mlx":
+        return _call_mlx(system, user)
+    return _call_llamacpp(system, user)
+
+
+def _call_mlx(system: str, user: str) -> str | None:
+    """Inference via mlx-lm (Apple Silicon native)."""
+    if _mlx_model is None or _mlx_tokenizer is None:
+        return None
+    try:
+        import mlx_lm  # type: ignore
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+        prompt = _mlx_tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        return mlx_lm.generate(
+            _mlx_model, _mlx_tokenizer,
+            prompt=prompt,
+            max_tokens=MAX_TOKENS,
+            verbose=False,
+        ).strip()
+    except Exception as exc:
+        log.error("MLX inference error: %s", exc)
+        return None
+
+
+def _call_llamacpp(system: str, user: str) -> str | None:
+    """Inference via llama-cpp-python (GGUF, cross-platform fallback)."""
     if _llm is None:
         return None
     try:
@@ -112,7 +184,7 @@ def _call_llm(system: str, user: str) -> str | None:
         )
         return response["choices"][0]["message"]["content"].strip()
     except Exception as exc:
-        log.error("LLM inference error: %s", exc)
+        log.error("llama-cpp inference error: %s", exc)
         return None
 
 
@@ -169,7 +241,11 @@ def _parse_list_with_retry(system: str, user: str, item_cls: type, retries: int 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model_loaded": _llm is not None}
+    if BACKEND == "mlx":
+        loaded = _mlx_model is not None
+    else:
+        loaded = _llm is not None
+    return {"status": "ok", "backend": BACKEND, "model_loaded": loaded}
 
 
 @app.post("/setup-mystery", response_model=MysterySetup)

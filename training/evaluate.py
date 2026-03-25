@@ -6,8 +6,12 @@ Runs a set of representative prompts through the loaded model and checks:
 2. Output matches expected schema
 3. Action choices make sense (guilt-consistent, pressure-consistent)
 
-Usage:
-  MODEL_PATH=../llm-server/model/murder-mystery.gguf python evaluate.py
+Usage (MLX model — recommended on Apple Silicon):
+  python evaluate.py
+  # or set MLX_MODEL_PATH to override default
+
+Usage (GGUF/llama-cpp fallback):
+  BACKEND=llamacpp MODEL_PATH=../llm-server/model/murder-mystery.gguf python evaluate.py
 """
 from __future__ import annotations
 
@@ -72,17 +76,38 @@ Respond as JSON: {"dialogue":..., "lie":..., "emotion":..., "internal_thought":.
 
 
 def evaluate():
-    try:
-        from llama_cpp import Llama  # type: ignore
-    except ImportError:
-        sys.exit("llama_cpp not installed. Run: pip install llama-cpp-python")
+    backend = os.getenv("BACKEND", "mlx").lower()
 
-    model_path = os.getenv("MODEL_PATH", "../llm-server/model/murder-mystery.gguf")
-    if not Path(model_path).exists():
-        sys.exit(f"Model not found at {model_path}. Set MODEL_PATH env var.")
-
-    log.info("Loading model from %s ...", model_path)
-    llm = Llama(model_path=model_path, n_ctx=2048, n_gpu_layers=-1, verbose=False)
+    if backend == "mlx":
+        try:
+            import mlx_lm  # type: ignore
+        except ImportError:
+            sys.exit("mlx-lm not installed. Run: pip install mlx-lm")
+        mlx_model_path = os.getenv("MLX_MODEL_PATH", "../llm-server/model/mlx-model")
+        if not Path(mlx_model_path).exists():
+            sys.exit(f"MLX model not found at {mlx_model_path}. Set MLX_MODEL_PATH env var.")
+        log.info("Loading MLX model from %s ...", mlx_model_path)
+        model, tokenizer = mlx_lm.load(mlx_model_path)
+        def _infer(system: str, user: str) -> str:
+            messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+            prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            return mlx_lm.generate(model, tokenizer, prompt=prompt, max_tokens=300, verbose=False)
+    else:
+        try:
+            from llama_cpp import Llama  # type: ignore
+        except ImportError:
+            sys.exit("llama_cpp not installed. Run: pip install llama-cpp-python")
+        model_path = os.getenv("MODEL_PATH", "../llm-server/model/murder-mystery.gguf")
+        if not Path(model_path).exists():
+            sys.exit(f"Model not found at {model_path}. Set MODEL_PATH env var.")
+        log.info("Loading GGUF model from %s ...", model_path)
+        llm = Llama(model_path=model_path, n_ctx=2048, n_gpu_layers=-1, verbose=False)
+        def _infer(system: str, user: str) -> str:
+            resp = llm.create_chat_completion(
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+                max_tokens=300, temperature=0.3,
+            )
+            return resp["choices"][0]["message"]["content"].strip()
 
     passed = 0
     failed = 0
@@ -90,15 +115,7 @@ def evaluate():
     for i, (desc, system, user, expected_keys) in enumerate(TEST_CASES, 1):
         log.info("\n[Test %d/%d] %s", i, len(TEST_CASES), desc)
         try:
-            response = llm.create_chat_completion(
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                max_tokens=300,
-                temperature=0.3,
-            )
-            raw = response["choices"][0]["message"]["content"].strip()
+            raw = _infer(system, user).strip()
             log.info("Raw output: %s", raw[:200])
 
             parsed = json.loads(raw)

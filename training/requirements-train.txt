@@ -1,7 +1,7 @@
-unsloth
-trl>=0.12
+# Apple Silicon (MLX) fine-tuning — no CUDA/Triton required
+mlx-tune>=0.4
+mlx>=0.20
+mlx-lm>=0.20
 datasets>=3.0
-transformers>=4.45
-torch>=2.4
-accelerate>=1.0
-openai>=1.0
+transformers>=4.45   # tokenizer only; no torch training loop needed
+openai>=1.0          # for synthetic data generation via cloud LLM

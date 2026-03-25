@@ -7,19 +7,21 @@ requires-python = ">=3.11"
 fastapi = ">=0.115"
 uvicorn = {extras = ["standard"], version = ">=0.30"}
 pydantic = ">=2.0"
-llama-cpp-python = ">=0.3"
 python-dotenv = ">=1.0"
+# Primary backend: Apple Silicon MLX (native, best performance on M-series)
+mlx-lm = ">=0.20"
 
 [project.optional-dependencies]
-# Only needed for fine-tuning (training pipeline)
+# Cross-platform GGUF fallback (set BACKEND=llamacpp in .env)
+llamacpp = ["llama-cpp-python>=0.3"]
+
+# Fine-tuning pipeline (run from training/ directory)
 train = [
-    "unsloth",
-    "trl>=0.12",
+    "mlx-tune>=0.4",
+    "mlx>=0.20",
     "datasets>=3.0",
     "transformers>=4.45",
-    "torch>=2.4",
-    "accelerate>=1.0",
-    "openai>=1.0",   # for synthetic data generation via cloud LLM
+    "openai>=1.0",
 ]
 
 [tool.ruff.lint]

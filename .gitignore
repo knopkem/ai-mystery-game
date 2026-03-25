@@ -18,6 +18,7 @@ build/
 llm-server/model/*.gguf
 llm-server/model/*.bin
 llm-server/model/*.safetensors
+llm-server/model/mlx-model/
 training/model-gguf/
 training/checkpoints/
 training/outputs/
