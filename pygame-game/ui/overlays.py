@@ -169,11 +169,28 @@ def draw_notes_overlay(surf: pygame.Surface, gs: GameState, btn_close: Button) -
     draw_divider(surf, rect, y)
     y += px(8)
 
-    clip = surf.get_clip()
-    surf.set_clip(pygame.Rect(x, y, w, rect.bottom - y - px(60)))
-    for note in gs.notes:
-        y = draw_text(surf, "panel_sm", f"• {note}", C["text"], x, y, max_w=w)
-    surf.set_clip(clip)
+    content_top = y
+    avail_h     = rect.bottom - content_top - px(60)   # leave room for Close button
+
+    # Render all notes onto an off-screen surface; blit bottom slice so
+    # newest note is always visible (same pattern as interrogation history).
+    CONTENT_H = max(avail_h, px(4000))
+    content   = pygame.Surface((w, CONTENT_H), pygame.SRCALPHA)
+    cy = 0
+    if gs.notes:
+        for note in gs.notes:
+            cy = draw_text(content, "panel_sm", f"• {note}", C["text"], 0, cy, max_w=w)
+    else:
+        draw_text(content, "panel_sm", "No notes yet — examine evidence and interrogate suspects.",
+                  C["text_dim"], 0, cy)
+        cy += px(20)
+
+    scroll_y = max(0, cy - avail_h)
+
+    old_clip = surf.get_clip()
+    surf.set_clip(pygame.Rect(x, content_top, w, avail_h))
+    surf.blit(content, (x, content_top), pygame.Rect(0, scroll_y, w, avail_h))
+    surf.set_clip(old_clip)
 
     btn_close.rect = pygame.Rect(rect.right - px(130), rect.bottom - px(48), px(110), px(34))
     btn_close.draw(surf)
