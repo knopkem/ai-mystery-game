@@ -24,6 +24,7 @@ import sys
 import threading
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from pathlib import Path
 from typing import Callable, Optional
 
 import pygame
@@ -345,6 +346,115 @@ class LLMClient:
             "game_state": game_state_dict,
         }
         threading.Thread(target=self._post, args=("/interrogate", payload, "interrogate"), daemon=True).start()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TRAINING-DATA NPC ACTION SAMPLER
+# When the LLM server is offline we sample from the real training data
+# (npc_actions.jsonl) instead of using pure rule-based logic. This gives
+# richer internal_thought text while we still substitute real targets from
+# the live game state.
+# ═══════════════════════════════════════════════════════════════════════════
+
+_NPC_ACTION_POOL: list[dict] | None = None  # lazy-loaded once
+
+_ACTION_NORMALISE = {
+    "conceal_evidence": "hide_evidence",
+    "remove_evidence":  "hide_evidence",
+    "pocket_evidence":  "hide_evidence",
+    "avoid":            "move",
+    "flee":             "move",
+    "relocate":         "move",
+    "confess_partial":  "stay_calm",
+    "confess":          "stay_calm",
+    "wait":             "stay_calm",
+    "observe":          "investigate",
+    "examine":          "investigate",
+    "search":           "investigate",
+    "approach_player_with_information": "talk_to",
+    "deflect":          "stay_calm",
+    "act_innocent":     "stay_calm",
+    "confront":         "talk_to",
+    "accuse":           "talk_to",
+}
+_VALID_ACTIONS = {
+    "move", "hide_evidence", "destroy_evidence", "talk_to",
+    "plant_evidence", "act_nervous", "stay_calm", "investigate",
+}
+
+
+def _load_npc_action_pool() -> list[dict]:
+    global _NPC_ACTION_POOL
+    if _NPC_ACTION_POOL is not None:
+        return _NPC_ACTION_POOL
+    # Path: pygame-game/../training/data/npc_actions.jsonl
+    data_path = Path(__file__).parent.parent / "training" / "data" / "npc_actions.jsonl"
+    pool: list[dict] = []
+    if data_path.exists():
+        with open(data_path) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ex = json.loads(line)
+                    out = ex.get("output", {})
+                    if isinstance(out, str):
+                        out = json.loads(out)
+                    action = _ACTION_NORMALISE.get(out.get("action", ""), out.get("action", ""))
+                    if action not in _VALID_ACTIONS:
+                        action = "stay_calm"
+                    inp = ex.get("input", "").lower()
+                    # Tag each entry for fast filtering
+                    is_killer = any(kw in inp for kw in ("killer", "you killed", "the guilty", "guilt"))
+                    pressure_bucket = "low"
+                    for tok in inp.split():
+                        tok = tok.strip("/:,.")
+                        if tok.isdigit():
+                            n = int(tok)
+                            if n <= 3:
+                                pressure_bucket = "low"
+                            elif n <= 6:
+                                pressure_bucket = "med"
+                            else:
+                                pressure_bucket = "high"
+                            break
+                    personality = "cold"
+                    for p in ("nervous", "arrogant", "charming", "cold", "paranoid"):
+                        if p in inp:
+                            personality = p
+                            break
+                    pool.append({
+                        "action":           action,
+                        "internal_thought": out.get("internal_thought", ""),
+                        "is_killer":        is_killer,
+                        "personality":      personality,
+                        "pressure_bucket":  pressure_bucket,
+                    })
+                except Exception:
+                    pass
+    _NPC_ACTION_POOL = pool
+    return pool
+
+
+def _sample_npc_action(is_killer: bool, personality: str, pressure: int) -> dict | None:
+    """Return a sampled training-data action dict or None if pool is empty."""
+    pool = _load_npc_action_pool()
+    if not pool:
+        return None
+    bucket = "low" if pressure <= 3 else ("med" if pressure <= 6 else "high")
+    # Progressively relax filters to always find something
+    for filt in [
+        lambda e: e["is_killer"] == is_killer and e["personality"] == personality and e["pressure_bucket"] == bucket,
+        lambda e: e["is_killer"] == is_killer and e["personality"] == personality,
+        lambda e: e["is_killer"] == is_killer and e["pressure_bucket"] == bucket,
+        lambda e: e["is_killer"] == is_killer,
+        lambda e: True,
+    ]:
+        candidates = [e for e in pool if filt(e)]
+        if candidates:
+            return random.choice(candidates)
+    return None
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -761,29 +871,65 @@ class GameState:
     def fallback_actions(self) -> list[dict]:
         actions = []
         for name, npc in self.npcs.items():
-            ev = [i for i, loc in self.evidence_locations.items() if loc and loc != "__hidden__"]
-            other = [r for r in ROOMS if r != npc["current_room"]]
-            if npc["is_killer"]:
-                if ev and random.random() < 0.5:
-                    action, target = "hide_evidence", random.choice(ev)
-                elif other and npc["current_room"] == self.player_room:
-                    action, target = "move", random.choice(other)
+            ev_here   = [i for i, loc in self.evidence_locations.items()
+                         if loc == npc["current_room"]]
+            ev_any    = [i for i, loc in self.evidence_locations.items()
+                         if loc and loc != "__hidden__"]
+            other_rooms = [r for r in ROOMS if r != npc["current_room"]]
+            pressure  = npc.get("pressure", 0)
+
+            # Try training-data sampler first
+            sampled = _sample_npc_action(npc["is_killer"], npc.get("personality","cold"), pressure)
+            if sampled:
+                action = sampled["action"]
+                thought = sampled["internal_thought"]
+                # Map action → real target from live game state
+                if action == "hide_evidence":
+                    target = random.choice(ev_here) if ev_here else (random.choice(ev_any) if ev_any else "")
+                    if not target:
+                        action, target = "stay_calm", ""
+                elif action == "destroy_evidence":
+                    target = random.choice(ev_here) if ev_here else ""
+                    if not target:
+                        action, target = "move", random.choice(other_rooms) if other_rooms else ""
+                elif action == "plant_evidence":
+                    target = random.choice(ev_any) if ev_any else ""
+                    if not target:
+                        action, target = "stay_calm", ""
+                elif action == "move":
+                    target = random.choice(other_rooms) if other_rooms else npc["current_room"]
+                elif action == "talk_to":
+                    others = [n for n in self.npcs if n != name]
+                    target = random.choice(others) if others else ""
+                    if not target:
+                        action, target = "stay_calm", ""
                 else:
-                    action, target = "stay_calm", ""
+                    target = ""
             else:
-                roll = random.random()
-                if roll < 0.35:
-                    action, target = "stay_calm", ""
-                elif roll < 0.55 and other:
-                    action, target = "move", random.choice(other)
-                elif roll < 0.70:
-                    action, target = "investigate", ""
-                elif npc["personality"] == "nervous":
-                    action, target = "act_nervous", ""
+                # Pure rule-based last resort
+                thought = "(fallback)"
+                if npc["is_killer"]:
+                    if ev_any and random.random() < 0.5:
+                        action, target = "hide_evidence", random.choice(ev_any)
+                    elif other_rooms and npc["current_room"] == self.player_room:
+                        action, target = "move", random.choice(other_rooms)
+                    else:
+                        action, target = "stay_calm", ""
                 else:
-                    action, target = "stay_calm", ""
+                    roll = random.random()
+                    if roll < 0.35:
+                        action, target = "stay_calm", ""
+                    elif roll < 0.55 and other_rooms:
+                        action, target = "move", random.choice(other_rooms)
+                    elif roll < 0.70:
+                        action, target = "investigate", ""
+                    elif npc.get("personality") == "nervous":
+                        action, target = "act_nervous", ""
+                    else:
+                        action, target = "stay_calm", ""
+
             actions.append({"npc_name": name, "action": action, "target": target,
-                            "secondary_target": None, "internal_thought": "(fallback)"})
+                            "secondary_target": None, "internal_thought": thought})
         return actions
 
     # ── Helpers ──────────────────────────────────────────────────────────
