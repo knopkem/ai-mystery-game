@@ -1,2 +1,4 @@
-pygame>=2.5
+# pygame-ce is the Community Edition fork — use instead of pygame on Python 3.13+
+# (pygame 2.6.x has a pygame.font circular-import bug on Python 3.14)
+pygame-ce>=2.5
 requests>=2.31
