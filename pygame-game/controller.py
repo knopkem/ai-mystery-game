@@ -31,7 +31,7 @@ from ui.theme import _apply_dpr, _init_fonts
 from ui.widgets import Button, TextInput
 from ui.map_view import draw_map
 from ui.hud import draw_hud, draw_panel, draw_log
-from ui.overlays import draw_interrogate_overlay, draw_accuse_overlay, draw_notes_overlay
+from ui.overlays import draw_interrogate_overlay, draw_accuse_overlay, draw_notes_overlay, draw_thinking_popup
 from ui.screens import draw_title_screen, draw_tutorial_screen, draw_loading_screen, draw_game_over
 from game.constants import TITLE, FPS, ROOMS, EVIDENCE_ITEMS, SUSPECT_BLUEPRINTS, PLAYER_AP
 from game.state import Phase, GameState
@@ -516,6 +516,11 @@ class Game:
 
         elif self.overlay == Overlay.NOTES:
             draw_notes_overlay(self.surf, self.gs, self.btn_notes_close)
+
+        # Thinking popup — shown on top of everything when LLM is processing
+        # and no other overlay has its own waiting indicator
+        if self.thinking and self.overlay not in (Overlay.INTERROGATE, Overlay.ACCUSE):
+            draw_thinking_popup(self.surf)
 
         if self.screen == Screen.GAME_OVER:
             draw_game_over(self.surf, self.go_state)

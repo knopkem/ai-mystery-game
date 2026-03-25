@@ -121,6 +121,33 @@ def draw_accuse_overlay(surf: pygame.Surface, state: dict) -> None:
     state["btn_cancel"].draw(surf)
 
 
+def draw_thinking_popup(surf: pygame.Surface, message: str = "NPCs are deliberating") -> None:
+    """Non-interactive popup shown while the LLM is processing. Auto-dismissed by caller."""
+    W, H = px(380), px(110)
+    rect = pygame.Rect(_t.WIN_W // 2 - W // 2, _t.WIN_H // 2 - H // 2, W, H)
+
+    # dim the whole screen
+    veil = pygame.Surface((_t.WIN_W, _t.WIN_H), pygame.SRCALPHA)
+    veil.fill((0, 0, 0, 140))
+    surf.blit(veil, (0, 0))
+
+    draw_overlay_bg(surf, rect)
+
+    # animated dots — cycle every 500 ms
+    dots = "." * (pygame.time.get_ticks() // 500 % 4)
+    label = f"{message}{dots}"
+
+    # hourglass icon + message centred vertically
+    icon_y = rect.centery - px(18)
+    draw_text(surf, "big", "⏳", (215, 145, 30), rect.centerx - px(130), icon_y)
+    draw_text(surf, "panel", label, (255, 215, 60),
+              rect.centerx - px(85), icon_y + px(4))
+
+    hint_y = rect.bottom - px(26)
+    draw_text(surf, "panel_sm", "Please wait…", (130, 110, 75),
+              rect.centerx - px(38), hint_y)
+
+
 def draw_notes_overlay(surf: pygame.Surface, gs: GameState, btn_close: Button) -> None:
     rect = pygame.Rect(px(60), px(60), _t.WIN_W - px(120), _t.WIN_H - px(120))
     draw_overlay_bg(surf, rect)
