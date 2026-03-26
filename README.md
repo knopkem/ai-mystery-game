@@ -129,7 +129,7 @@ hf_hub_download('bartowski/Meta-Llama-3.1-8B-Instruct-GGUF',
 ```bash
 cp .env.example .env
 # Edit .env: set BACKEND=mlx (Apple Silicon) or BACKEND=llamacpp (GPU/CPU)
-uvicorn server:app --host 127.0.0.1 --port 8000
+python server.py
 ```
 
 #### 2. Run the game
