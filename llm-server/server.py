@@ -58,7 +58,8 @@ MLX_MODEL_PATH = os.getenv("MLX_MODEL_PATH", "model/mlx-model")
 # llama-cpp backend (cross-platform GGUF fallback)
 MODEL_PATH = Path(os.getenv("MODEL_PATH", "model/murder-mystery.gguf"))
 N_CTX = int(os.getenv("N_CTX", "4096"))
-N_GPU_LAYERS = int(os.getenv("N_GPU_LAYERS", "-1"))  # -1 = all layers on Metal
+N_GPU_LAYERS = int(os.getenv("N_GPU_LAYERS", "-1"))  # -1 = all layers on Metal/CUDA/hipBLAS
+VERBOSE_LLM = os.getenv("VERBOSE_LLM", "false").lower() in ("1", "true", "yes")
 
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "512"))
 MAX_RETRIES = 3
@@ -105,7 +106,7 @@ def _load_model_llamacpp() -> object | None:
             model_path=str(MODEL_PATH),
             n_ctx=N_CTX,
             n_gpu_layers=N_GPU_LAYERS,
-            verbose=False,
+            verbose=VERBOSE_LLM,
         )
         log.info("GGUF model loaded successfully.")
         return llm

@@ -1,8 +1,22 @@
 # AMD ROCm fine-tuning with Unsloth + TRL
 #
 # !! LINUX ONLY !! PyTorch ROCm wheels are not available for Windows.
-# Windows users must use WSL2 (Windows Subsystem for Linux) or a Linux machine.
+# Windows users must use WSL2 (Windows Subsystem for Linux) or a native Linux install.
 # WSL2 guide: https://learn.microsoft.com/en-us/windows/wsl/install
+#
+# !! WSL2 PREREQUISITE !! ROCm compute requires /dev/kfd to be exposed by the AMD
+# Windows driver. This is NOT the same as graphics/Vulkan support.
+# Before proceeding, verify in WSL2:
+#   ls /dev/kfd   →  must exist (not "No such file or directory")
+#   ls /dev/dri/renderD128  →  presence of this alone is NOT sufficient for ROCm
+#
+# If /dev/kfd is missing:
+#   1. Update AMD Adrenalin to the latest version on Windows (23.30+ required)
+#   2. Restart WSL2: run  wsl --shutdown  in PowerShell, then reopen
+#   3. If still missing after update, AMD WSL2 ROCm compute is unsupported on
+#      your GPU/driver combination. Alternatives:
+#        - Dual-boot Ubuntu (native ROCm, most reliable)
+#        - Cloud GPU: RunPod / Vast.ai (cheap hourly NVIDIA/AMD instances)
 #
 # Step 1 — Install PyTorch for your ROCm version (pick the matching line):
 #   ROCm 7.2 (current stable):
