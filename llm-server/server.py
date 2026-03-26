@@ -142,14 +142,14 @@ app = FastAPI(
 # LLM call helper
 # ---------------------------------------------------------------------------
 
-def _call_llm(system: str, user: str) -> str | None:
+def _call_llm(system: str, user: str, max_tokens: int = MAX_TOKENS) -> str | None:
     """Call the active backend; return raw text or None on failure."""
     if BACKEND == "mlx":
-        return _call_mlx(system, user)
-    return _call_llamacpp(system, user)
+        return _call_mlx(system, user, max_tokens)
+    return _call_llamacpp(system, user, max_tokens)
 
 
-def _call_mlx(system: str, user: str) -> str | None:
+def _call_mlx(system: str, user: str, max_tokens: int = MAX_TOKENS) -> str | None:
     """Inference via mlx-lm (Apple Silicon native)."""
     if _mlx_model is None or _mlx_tokenizer is None:
         return None
@@ -162,7 +162,7 @@ def _call_mlx(system: str, user: str) -> str | None:
         return mlx_lm.generate(
             _mlx_model, _mlx_tokenizer,
             prompt=prompt,
-            max_tokens=MAX_TOKENS,
+            max_tokens=max_tokens,
             verbose=False,
         ).strip()
     except Exception as exc:
@@ -170,7 +170,7 @@ def _call_mlx(system: str, user: str) -> str | None:
         return None
 
 
-def _call_llamacpp(system: str, user: str) -> str | None:
+def _call_llamacpp(system: str, user: str, max_tokens: int = MAX_TOKENS) -> str | None:
     """Inference via llama-cpp-python (GGUF, cross-platform fallback)."""
     if _llm is None:
         return None
@@ -180,7 +180,7 @@ def _call_llamacpp(system: str, user: str) -> str | None:
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            max_tokens=MAX_TOKENS,
+            max_tokens=max_tokens,
             temperature=0.7,
         )
         return response["choices"][0]["message"]["content"].strip()
@@ -192,8 +192,20 @@ def _call_llamacpp(system: str, user: str) -> str | None:
 def _extract_json(text: str) -> str:
     """Strip markdown fences and extract the first JSON object or array."""
     text = re.sub(r"```(?:json)?", "", text).strip()
-    # Find outermost { } or [ ]
-    for start_char, end_char in [('{', '}'), ('[', ']')]:
+    # Prefer whichever bracket appears first in the text
+    pos_obj = text.find('{')
+    pos_arr = text.find('[')
+    if pos_obj == -1 and pos_arr == -1:
+        return text
+    if pos_obj == -1:
+        pairs = [('[', ']')]
+    elif pos_arr == -1:
+        pairs = [('{', '}')]
+    elif pos_arr < pos_obj:
+        pairs = [('[', ']'), ('{', '}')]
+    else:
+        pairs = [('{', '}'), ('[', ']')]
+    for start_char, end_char in pairs:
         start = text.find(start_char)
         if start != -1:
             depth = 0
@@ -207,10 +219,10 @@ def _extract_json(text: str) -> str:
     return text
 
 
-def _parse_with_retry(system: str, user: str, schema_cls: type, retries: int = MAX_RETRIES):
+def _parse_with_retry(system: str, user: str, schema_cls: type, retries: int = MAX_RETRIES, max_tokens: int = MAX_TOKENS):
     """Call LLM up to `retries` times; parse into schema_cls or return None."""
     for attempt in range(retries):
-        raw = _call_llm(system, user)
+        raw = _call_llm(system, user, max_tokens)
         if raw is None:
             return None
         try:
@@ -220,14 +232,20 @@ def _parse_with_retry(system: str, user: str, schema_cls: type, retries: int = M
     return None
 
 
-def _parse_list_with_retry(system: str, user: str, item_cls: type, retries: int = MAX_RETRIES):
+def _parse_list_with_retry(system: str, user: str, item_cls: type, retries: int = MAX_RETRIES, max_tokens: int = MAX_TOKENS):
     """Call LLM up to `retries` times; parse into list[item_cls] or return None."""
     for attempt in range(retries):
-        raw = _call_llm(system, user)
+        raw = _call_llm(system, user, max_tokens)
         if raw is None:
             return None
         try:
             parsed = json.loads(_extract_json(raw))
+            # Unwrap {"actions": [...]} or {"npcs": [...]} style responses
+            if isinstance(parsed, dict):
+                for v in parsed.values():
+                    if isinstance(v, list):
+                        parsed = v
+                        break
             if not isinstance(parsed, list):
                 raise ValueError("Expected a JSON array")
             return [item_cls.model_validate(item) for item in parsed]
@@ -289,8 +307,9 @@ def npc_actions(req: NpcActionsRequest):
     """Return a batch of NPC actions for the current game turn."""
     system, user = build_batch_npc_action_prompt(req.game_state.npcs, req.game_state)
 
+    # 5 NPCs × ~50 tokens each + JSON framing = ~350 tokens; tight cap reduces latency
     results: list[NpcActionResult] | None = _parse_list_with_retry(
-        system, user, NpcActionResult
+        system, user, NpcActionResult, max_tokens=350
     )
 
     if results is None:
