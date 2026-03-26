@@ -81,6 +81,19 @@ The game runs fully offline using rule-based interrogation fallbacks and trainin
 
 ---
 
+### Recommended models
+
+| Model | Tag | Why? |
+|---|---|---|
+| **Llama 3.1 8B** | Top Choice | Highly optimized for MLX. Fits comfortably in 4-bit with room for a 4k context window. |
+| **Mistral 7B v0.3** | Great Alternative | Very stable on Mac; slightly smaller memory footprint than Llama 3.1. |
+| **Phi-3.5 Mini (3.8B)** | Speed King | Trains incredibly fast on an M4. Can use a larger context window (8k+). |
+| **Gemma 2 9B** | Experimental | Fits on 16 GB but it's a tight squeeze — keep batch sizes at 1. |
+
+All models above are available as MLX 4-bit quantizations on the `mlx-community` HuggingFace namespace. For NVIDIA/AMD, use the corresponding GGUF from `bartowski` or `unsloth`.
+
+---
+
 ### Option B — Play with the base Llama 3.1 8B (no fine-tuning required)
 
 #### 1. Set up and start the LLM server
