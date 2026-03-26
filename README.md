@@ -12,13 +12,19 @@ The player is a detective investigating a murder in a Victorian mansion. 5 suspe
 |-----------|-----------|
 | Game Engine | **Pygame-CE** (Python, programmatic UI — no assets needed) |
 | LLM Server | Python + FastAPI |
-| Base Model | **Llama 3.1 8B** (mlx-community 4-bit, ~4 GB) |
-| Fine-tuning | **mlx-tune** (Unsloth-compatible, Apple Silicon native) |
-| Inference | **mlx-lm** (MLX native) / llama-cpp-python (GGUF fallback) |
+| Base Model | **Llama 3.1 8B** (4-bit quantized, ~4–5 GB) |
+| Fine-tuning | **mlx-tune** (Apple Silicon) · **Unsloth + TRL** (NVIDIA / AMD GPU) |
+| Inference | **mlx-lm** (Apple Silicon) · **llama-cpp-python** (GGUF, all platforms) |
 | Training data | ~2700 synthetic examples generated via Anthropic Claude |
 | Communication | HTTP REST (localhost:8000) |
 
-**Target hardware**: MacBook M4, 16 GB RAM (~4 GB model, ~200 MB game)
+**Supported training hardware**
+
+| Platform | Requirements | Notes |
+|----------|-------------|-------|
+| Apple Silicon | macOS, 16 GB RAM | `mlx-tune` — no CUDA/Triton needed |
+| NVIDIA GPU | CUDA 11.8+, 6 GB+ VRAM | `unsloth` + `trl` + `bitsandbytes` |
+| AMD GPU | ROCm 7.2+, 6 GB+ VRAM | `unsloth` + `trl` + `bitsandbytes` (ROCm wheels) — **Linux / WSL2 only** |
 
 ## Project Structure
 
@@ -47,12 +53,15 @@ ai-game/
 │   ├── fallback.py      # Server-side rule-based fallbacks
 │   ├── .env.example     # Config template (BACKEND, MLX_MODEL_PATH)
 │   └── model/           # Model files go here (gitignored)
-├── training/            # Fine-tuning pipeline (Apple Silicon)
-│   ├── generate_data.py # ~2700 synthetic examples via Anthropic Claude
-│   ├── train.py         # mlx-tune LoRA fine-tuning (Air-optimised)
-│   ├── export_gguf.py   # Optional GGUF export for cross-platform deploy
-│   ├── evaluate.py      # Quality evaluation script
-│   └── data/            # Generated JSONL training data (gitignored)
+├── training/            # Fine-tuning pipeline (MLX / CUDA / ROCm)
+│   ├── generate_data.py      # ~2700 synthetic examples via Anthropic Claude
+│   ├── train.py              # LoRA fine-tuning — auto-detects hardware backend
+│   ├── export_gguf.py        # GGUF export for cross-platform llama-cpp deploy
+│   ├── evaluate.py           # Quality evaluation script
+│   ├── requirements-train.txt       # Apple Silicon (mlx-tune)
+│   ├── requirements-train-cuda.txt  # NVIDIA CUDA (unsloth + trl)
+│   ├── requirements-train-rocm.txt  # AMD ROCm  (unsloth + trl)
+│   └── data/                 # Generated JSONL training data (gitignored)
 └── docs/
     └── game-design.md   # Full game design document
 ```
@@ -81,15 +90,32 @@ cd llm-server
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 pip install huggingface_hub
+```
 
-# Download Llama 3.1 8B 4-bit (~4 GB, one-time)
-# The HF_TOKEN is optional (but it might be very slow to download then -> better create a free account and generate a token)
+**Download the model** (choose one, ~4 GB, one-time):
+
+```bash
+# Apple Silicon — MLX 4-bit (fastest on macOS)
 HF_TOKEN=hf_your_token python3 -c "
 from huggingface_hub import snapshot_download
 snapshot_download('mlx-community/Meta-Llama-3.1-8B-Instruct-4bit', local_dir='model/mlx-model')
 "
 
-cp .env.example .env    # default settings are correct for Llama 3.1 8B
+# NVIDIA / AMD — GGUF 4-bit (for llama-cpp-python)
+HF_TOKEN=hf_your_token python3 -c "
+from huggingface_hub import hf_hub_download
+hf_hub_download('bartowski/Meta-Llama-3.1-8B-Instruct-GGUF',
+                filename='Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf',
+                local_dir='model')
+"
+# Then rename: mv model/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf model/murder-mystery.gguf
+```
+
+> **Tip**: `HF_TOKEN` is optional but avoids rate-limiting — create a free account at huggingface.co and generate a token.
+
+```bash
+cp .env.example .env
+# Edit .env: set BACKEND=mlx (Apple Silicon) or BACKEND=llamacpp (GPU/CPU)
 uvicorn server:app --host 127.0.0.1 --port 8000
 ```
 
@@ -107,36 +133,79 @@ The title screen shows **✓ LLM server online**. NPC behaviour and interrogatio
 
 ### Option C — Fine-tune on your game data (best results)
 
-#### 1. Generate training data (~2700 examples via Claude) - can be skipped (already included)
+#### 1. Generate training data (~2700 examples via Claude) — can be skipped (already included)
 
 ```bash
 cd training
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements-train.txt
+pip install -r requirements-train.txt   # or the cuda/rocm variant — just needs anthropic
 
 ANTHROPIC_API_KEY=sk-ant-... python generate_data.py
 # Saves to data/npc_actions.jsonl, data/interrogations.jsonl, data/mystery_setups.jsonl
 # Resumes automatically if interrupted
 ```
 
-#### 2. Fine-tune (Apple Silicon, MacBook Air safe)
+#### 2. Install training dependencies (pick your hardware)
 
+**Apple Silicon:**
 ```bash
-python train.py
-# Default: Llama 3.1 8B, batch=1, 5-min cooldown between epochs
-# Checkpoint saved every 50 steps — crash-safe
-# Takes ~2.5 hours on M4 Air (lid open, hard surface recommended)
-
-# Other model options:
-python train.py --model mlx-community/Phi-3.5-mini-instruct-4bit   # faster
-python train.py --model mlx-community/Mistral-7B-Instruct-v0.3-4bit
-python train.py --cooldown 0   # disable cooldown (MacBook Pro / Mac Studio)
+pip install -r requirements-train.txt
 ```
 
-#### 3. Deploy and run
+**NVIDIA CUDA** (install matching PyTorch first):
+```bash
+# CUDA 12.4 example — see requirements-train-cuda.txt for other versions
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+pip install -r requirements-train-cuda.txt
+```
 
+**AMD ROCm** — **Linux or WSL2 only** (PyTorch has no Windows ROCm wheels):
+```bash
+# ROCm 7.2 (current stable) — see requirements-train-rocm.txt for legacy 6.x versions
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm7.2
+pip install -r requirements-train-rocm.txt
+```
+
+#### 3. Fine-tune
+
+`train.py` auto-detects hardware. Override with `--backend` if needed.
+
+**Apple Silicon:**
+```bash
+python train.py
+# Default: Llama 3.1 8B 4-bit, batch=1, 5-min cooldown between epochs
+# Checkpoint every 50 steps — crash-safe
+# ~2.5 hours on M4 Air
+
+python train.py --model mlx-community/Phi-3.5-mini-instruct-4bit   # faster / less RAM
+python train.py --cooldown 0   # MacBook Pro / Mac Studio (active cooling)
+```
+
+**NVIDIA / AMD GPU:**
+```bash
+python train.py --backend cuda   # or --backend rocm
+# Default: unsloth/Meta-Llama-3.1-8B-Instruct-bnb-4bit, batch=2
+# Requires ~6 GB VRAM; increase --batch-size on cards with more VRAM
+
+python train.py --backend cuda --model unsloth/Phi-3.5-mini-instruct-bnb-4bit   # ~3 GB VRAM
+python train.py --backend cuda --batch-size 4   # e.g. RTX 4090 / A100
+```
+
+#### 4. Deploy and run
+
+**Apple Silicon** (MLX model → mlx-lm backend):
 ```bash
 cp -r checkpoints/mlx-model ../llm-server/model/mlx-model
+# Ensure llm-server/.env has BACKEND=mlx
+cd ../llm-server && uvicorn server:app --host 127.0.0.1 --port 8000
+```
+
+**NVIDIA / AMD GPU** (export to GGUF → llama-cpp backend):
+```bash
+# Convert merged checkpoint to GGUF
+python export_gguf.py
+cp model-gguf/murder-mystery-q4_k_m.gguf ../llm-server/model/murder-mystery.gguf
+# Set BACKEND=llamacpp in llm-server/.env
 cd ../llm-server && uvicorn server:app --host 127.0.0.1 --port 8000
 ```
 
@@ -184,11 +253,15 @@ Interrogation response:
 }
 ```
 
-## Why mlx-tune instead of Unsloth?
+## Training backend overview
 
-Unsloth requires Triton which is CUDA-only and unavailable on macOS.
-[`mlx-tune`](https://github.com/ARahim3/mlx-tune) is a community-built drop-in replacement
-with an identical API (`FastLanguageModel`, `SFTTrainer`) that runs natively on Apple Silicon.
-Inference uses [`mlx-lm`](https://github.com/ml-explore/mlx-lm) — also native MLX.
-GGUF export via `export_gguf.py` is available for cross-platform deployment.
+| Backend | Library | When to use |
+|---------|---------|-------------|
+| `mlx` (default on macOS/arm) | [`mlx-tune`](https://github.com/ARahim3/mlx-tune) | Apple Silicon — no CUDA/Triton required; runs natively on the M-series Neural Engine |
+| `cuda` | [`unsloth`](https://github.com/unslothai/unsloth) + `trl` | NVIDIA GPUs (RTX, A100, H100 …) |
+| `rocm` | `unsloth` + `trl` | AMD GPUs (RX 7900, MI300 …) via ROCm/HIP |
+
+`mlx-tune` and `unsloth` share an identical `FastLanguageModel` / `SFTTrainer` API — `train.py` imports the right one automatically. `export_gguf.py` also works with either library since both expose the same `save_pretrained_gguf()` method.
+
+The backend is selected automatically at startup (`auto` mode) or forced with `--backend <mlx|cuda|rocm>`.
 

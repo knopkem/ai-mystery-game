@@ -1,4 +1,6 @@
-# Apple Silicon (MLX) fine-tuning — no CUDA/Triton required
+# Apple Silicon (MLX) fine-tuning — no CUDA/Triton required.
+# For NVIDIA CUDA see requirements-train-cuda.txt
+# For AMD ROCm   see requirements-train-rocm.txt
 mlx-tune>=0.4
 mlx>=0.20
 mlx-lm>=0.20

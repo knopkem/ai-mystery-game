@@ -1,9 +1,8 @@
 """
 Export the fine-tuned merged model to GGUF format for llama.cpp (cross-platform).
 
-NOTE: On Apple Silicon the MLX-format model in checkpoints/mlx-model is preferred
-for inference (use it directly with mlx-lm). GGUF export is optional and only needed
-if you want to deploy to a non-Apple machine or test with other llama.cpp tools.
+Works with models trained by train.py on any supported backend (MLX, CUDA, ROCm).
+The merged/ directory produced by train.py is the input regardless of backend.
 
 Usage:
   python export_gguf.py [--merged ./checkpoints/merged] [--output ./model-gguf] [--quant q4_k_m]
@@ -33,11 +32,16 @@ def export(merged_dir: Path, output_dir: Path, quant: str):
         )
 
     try:
-        # mlx-tune uses identical save_pretrained_gguf API to Unsloth
-        from mlx_tune import FastLanguageModel  # type: ignore
+        # mlx-tune (Apple Silicon) and Unsloth (CUDA/ROCm) share the same
+        # save_pretrained_gguf API — try mlx_tune first, fall back to unsloth.
+        try:
+            from mlx_tune import FastLanguageModel  # type: ignore
+        except ImportError:
+            from unsloth import FastLanguageModel  # type: ignore
     except ImportError as e:
         raise SystemExit(
-            f"Missing dependency: {e}\nRun: pip install -r requirements-train.txt"
+            f"Missing dependency: {e}\n"
+            "Install mlx-tune (Apple Silicon) or unsloth (CUDA/ROCm)."
         ) from e
 
     log.info("Loading merged model from %s ...", merged_dir)
@@ -61,9 +65,9 @@ def export(merged_dir: Path, output_dir: Path, quant: str):
     log.info("  cp %s ../llm-server/model/murder-mystery.gguf", gguf_file)
     log.info("  # Set in llm-server/.env:  BACKEND=llamacpp")
     log.info("")
-    log.info("For Apple Silicon (recommended), use the MLX model instead:")
+    log.info("Apple Silicon users can also use the MLX model directly:")
     log.info("  cp -r checkpoints/mlx-model ../llm-server/model/mlx-model")
-    log.info("  # Set in llm-server/.env:  BACKEND=mlx  (default)")
+    log.info("  # Set in llm-server/.env:  BACKEND=mlx")
 
 
 def main():

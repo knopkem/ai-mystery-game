@@ -6,11 +6,14 @@ Runs a set of representative prompts through the loaded model and checks:
 2. Output matches expected schema
 3. Action choices make sense (guilt-consistent, pressure-consistent)
 
-Usage (MLX model — recommended on Apple Silicon):
+Usage (MLX model — Apple Silicon):
   python evaluate.py
   # or set MLX_MODEL_PATH to override default
 
-Usage (GGUF/llama-cpp fallback):
+Usage (HuggingFace / GPU — after training with --backend cuda or rocm):
+  BACKEND=transformers MODEL_PATH=./checkpoints/merged python evaluate.py
+
+Usage (GGUF/llama-cpp — any platform):
   BACKEND=llamacpp MODEL_PATH=../llm-server/model/murder-mystery.gguf python evaluate.py
 """
 from __future__ import annotations
@@ -92,7 +95,35 @@ def evaluate():
             messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
             prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             return mlx_lm.generate(model, tokenizer, prompt=prompt, max_tokens=300, verbose=False)
-    else:
+
+    elif backend in ("transformers", "hf"):
+        try:
+            from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline  # type: ignore
+            import torch  # type: ignore
+        except ImportError:
+            sys.exit("transformers/torch not installed. Run: pip install -r requirements-train-cuda.txt")
+        model_path = os.getenv("MODEL_PATH", "./checkpoints/merged")
+        if not Path(model_path).exists():
+            sys.exit(f"Model not found at {model_path}. Set MODEL_PATH env var.")
+        log.info("Loading HF model from %s ...", model_path)
+        _tokenizer = AutoTokenizer.from_pretrained(model_path)
+        _model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            torch_dtype=torch.float16,
+            device_map="auto",
+        )
+        _pipe = pipeline("text-generation", model=_model, tokenizer=_tokenizer)
+        def _infer(system: str, user: str) -> str:
+            messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+            prompt = _tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            out = _pipe(prompt, max_new_tokens=300, temperature=0.3, do_sample=True)
+            generated = out[0]["generated_text"]
+            # strip the prompt prefix that the pipeline echoes back
+            return generated[len(prompt):].strip()
+
+    else:  # llamacpp (default GPU-less fallback, or explicit BACKEND=llamacpp)
         try:
             from llama_cpp import Llama  # type: ignore
         except ImportError:
