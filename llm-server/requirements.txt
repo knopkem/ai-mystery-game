@@ -9,3 +9,19 @@ mlx-lm>=0.20
 # Optional fallback — cross-platform GGUF inference via llama.cpp
 # Uncomment if deploying on non-Apple hardware or using GGUF models:
 # llama-cpp-python>=0.3
+#
+# GPU-accelerated builds (pick one, run BEFORE pip install -r requirements.txt):
+#
+#   NVIDIA CUDA (pre-built wheel — easiest):
+#     pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
+#     (replace cu124 with cu121 / cu118 to match your CUDA version)
+#
+#   NVIDIA CUDA (build from source — if pre-built wheel unavailable):
+#     $env:CMAKE_ARGS = "-DGGML_CUDA=on"
+#     pip install llama-cpp-python --force-reinstall --no-cache-dir
+#
+#   AMD ROCm / hipBLAS (Linux / WSL2 only — build from source, no pre-built wheels):
+#     CMAKE_ARGS="-DGGML_HIPBLAS=on" pip install llama-cpp-python --force-reinstall --no-cache-dir
+#
+#   CPU-only fallback (slow but works everywhere):
+#     pip install llama-cpp-python
